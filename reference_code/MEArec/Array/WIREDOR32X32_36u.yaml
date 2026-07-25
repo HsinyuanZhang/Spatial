@@ -1,0 +1,14 @@
+description: Reconstruction of the 32x32 probe used in the WIREDOR paper
+plane: xy
+dim:
+- 32
+- 32
+electrode_name: WIREDOR32X32_36u
+pitch:
+- 36.0
+- 36.0
+shape: square
+size: 7.5
+sortlist: null
+stagger: 18
+type: mea

@@ -1,0 +1,39 @@
+# Default parameters for template generation
+
+
+# intracellular simulation settings
+sim_time: 1 # intracellular simulation time in s
+target_spikes: [9, 19]  # min-max number of spikes in sim_time. mean firing rate OFF and ON RGC 14+/- 5 Ref: 10.1523/JNEUROSCI.0130-07.2007
+cut_out: [2, 5]  # pre-post peak cut_out in ms
+dt: 0.05  # time step (2**-5) in ms
+delay: 1  # stimulation delay in ms
+weights: [0.25, 1.25]  # weights to multiply stimulus amplitude if number of spikes is above (0.25) or above (1.25)
+# target spikes
+
+# extracellular simulation settings
+rot: norot # random rotation to apply to cell models (norot, physrot, 3drot)
+probe: WIREDOR32X32_36u # extracellular probe (if None probes are listed)
+ncontacts: 1 # number of contacts per recording site
+overhang: 30 # extension in um beyond MEA boundaries for neuron locations (if lim is null)
+offset: 0 # plane offset (um) for MEA
+xlim:   null # limits ( low high ) for neuron locations in the x-axis (depth)
+ylim: null # limits ( low high ) for neuron locations in the y-axis
+zlim:  null # limits ( low high ) for neuron locations in the z-axis
+x_distr: 'uniform' # distribution of x locsations ('uniform' | 'beta')
+beta_distr_params: [1.5, 5] # parameters for beta distribution of x locations (depth)
+min_amp: 150 # minimum amplitude for detection
+n: 500 # number of EAPs per cell model
+seed: null # random seed for positions and rotations
+
+drifting: False # if True, drifting templates are simulated
+max_drift: 100 # max distance from the initial and final cell position
+min_drift: 80  # min distance from the initial and final cell position
+drift_steps: 50 # number of drift steps
+drift_xlim: [0, 200] # limits ( low high ) for neuron drift locations in the x-axis (depth)
+drift_ylim: [-1, 1] # limits ( low high ) for neuron drift locations in the y-axis (depth)
+drift_zlim: [-1, 1] # limits ( low high ) for neuron drift locations in the z-axis (depth)
+check_for_drift_amp: False # If True, the drifted template final amplitude must be greater than min_amp
+drift_within_bounds: False # If True, the drifted template final position must be within xlim, ylim, zlim bounds
+
+timeout: null # limits the time to find spikes
+max_iterations: 100 # limits the number of iterations to find spikes

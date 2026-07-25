@@ -1,0 +1,44 @@
+# Spatial SOM clustering experiment parameters
+# Based on Akhoundi et al. 2025 (JSSC)
+# Updated: 2026-07-23
+
+# Spike detection
+detection:
+  method: neo
+  c_neo: 10.0          # tuned for 2D grid (1024ch); 40 for 16ch HJ
+  filter_cutoff: [300, 6000]
+  filter_order: 3
+  refractory_ms: 1.0
+
+# Spatial feature extraction (Eq. 3-5)
+spatial_features:
+  n_neighbors: 6       # hexagonal grid neighbors
+  output_dim: 5        # [angle, distance_ratio, x_est, y_est, peak_amp]
+
+# Modified SOM clustering
+som:
+  grid_size: 64        # optimal for 2D grid datasets
+  alpha: 16            # BMU update factor (paper Sec. III-C)
+  beta: 4              # frequency pruning divisor (optimized)
+  batch_samples: 500
+  max_epochs: 50
+  convergence_window: 5
+
+# Evaluation
+evaluation:
+  tolerance_samples: 20  # ~1ms at 20kHz, ~0.67ms at 30kHz
+  tolerance_ms: 1.0
+
+# Per-dataset optimal parameters (from sweep results)
+optimal_params:
+  2d_grid_snr12:   {grid: 64, beta: 4}
+  2d_grid_snr8:    {grid: 64, beta: 8}
+  2d_grid_snr5:    {grid: 64, beta: 8}
+  hybrid_janelia:  {grid: 32, beta: 8}
+  cortexlab_np:    {grid: 32, beta: 4}  # limited by 1D probe degeneracy
+
+# Sweep ranges (for sweep_som_params.py)
+sweep:
+  grid_sizes: [32, 48, 64, 128]
+  betas: [2, 4, 8, 16, 32]
+  alphas: [8, 16, 32]
