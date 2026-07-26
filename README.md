@@ -1,10 +1,10 @@
-# Spatial Clustering — Akhoundi et al. 2025 Reproduction
+# Spatial Spike Sorting
 
-Reproduction and validation of the spatial feature extraction + modified SOM clustering method from:
+Reproduction and extension of the spatial clustering spike sorter from:
 
 > **Akhoundi et al., "A Scalable 1024-Channel Ultra-Low-Power Spike Sorting Chip With Event-Driven Detection and Spatial Clustering", IEEE JSSC, 2025.**
 
-Validated on three datasets covering 2D high-density and 1D linear probes.
+Starting from the TU Delft MATLAB reference, we ported to Python, validated across datasets, and developed improved spatial-only features, an unsupervised two-stage pipeline, CiM/CAM hardware approximations, and CV-inspired enhancements (SE-Net attention, multi-scale FPN).
 
 ---
 
@@ -12,273 +12,210 @@ Validated on three datasets covering 2D high-density and 1D linear probes.
 
 ```
 Spatial/
-├── README.md                        # This file
+├── README.md
 ├── .gitignore
-├── papers/                          # Reference paper (PDF)
+├── papers/                              # Reference paper PDF
 │
-├── reference_code/                  # TU Delft official MATLAB implementation
-│   ├── Classification/              #   SOM clustering (Classification.m)
-│   ├── FeatureExtraction/           #   Spatial features (FeatureExrtaction.m)
-│   ├── SpikeDetection/              #   NEO + VC-SPD detection
-│   ├── WiredOR/                     #   Wired-OR compression
-│   └── MEArec/                      #   32x32 2D grid probe configs
+├── reference_code/                      # TU Delft MATLAB implementation
+│   ├── Classification/                  #   SOM clustering
+│   ├── FeatureExtraction/               #   Spatial features (Eq. 3-5)
+│   ├── SpikeDetection/                  #   NEO + VC-SPD detection
+│   ├── WiredOR/                         #   Wired-OR analog compression
+│   └── MEArec/                          #   32x32 2D grid probe configs
 │
 ├── configs/
-│   └── experiment.yaml              # SOM + detection parameters (per-dataset optimal)
+│   └── experiment.yaml                  # Per-dataset optimal SOM + detection params
 │
 ├── data/
-│   ├── loader.py                    # Unified dataset loader (HJ + MEArec + NP)
-│   ├── generate_2d_grid.py          # 32x32 staggered grid generator (current)
-│   └── generate_mearec.py           # Legacy 32ch 1D generator (deprecated)
+│   ├── loader.py                        # Unified loader (HJ / MEArec / CortexLab NP)
+│   ├── generate_2d_grid.py              # 32x32 staggered honeycomb grid generator
+│   ├── generate_mearec.py               # Legacy 32ch 1D generator (deprecated)
+│   └── prepare_hybrid_janelia.py        # HJ dataset preparation
 │
 ├── algorithms/
-│   ├── spatial_features.py          # Our impl: Eq.3-5 direction angle + distance ratio
-│   ├── spatial_footprint.py         # Soft-loc / footprint / PCA (spatial-only ceiling)
-│   ├── som_clustering.py            # Our impl: modified SOM (BMU + pruning + merge)
-│   ├── detection.py                 # Our impl: NEO detection + window extraction
-│   └── reference_port.py            # Python port of MATLAB reference (all 5 modules)
+│   ├── detection.py                     # NEO detection + bandpass filter
+│   ├── spatial_features.py              # Akhoundi Eq. 3-5 (angle / ratio / position)
+│   ├── spatial_footprint.py             # soft_loc (COM + spread + sharpness), footprint P2P/PCA
+│   ├── som_clustering.py                # Modified SOM (BMU + pruning + merge)
+│   ├── reference_port.py                # Faithful Python port of all 5 MATLAB modules
+│   ├── two_stage_assign.py              # COM∧P2P gate + waveform 2nd-stage assignment
+│   ├── unsupervised_two_stage.py        # Fully unsupervised hierarchical 2-stage sorter
+│   ├── cim_thermometer.py               # Bipolar thermometer CAM encoding (hardware approx)
+│   ├── multiscale_footprint.py          # Multi-K (FPN-style) footprint extraction + fusion
+│   └── se_attention.py                  # SE-Net channel attention (Fisher / variance / per-cluster)
 │
 ├── experiments/
-│   ├── run_spatial_sorting.py       # Main pipeline: detect -> features -> SOM -> eval
-│   ├── run_spatial_upper_bound.py   # Spatial-only upper bound (HJ / CortexLab)
-│   ├── validate_2d_grid.py          # 2D grid validation script
-│   └── sweep_som_params.py          # Hyperparameter grid search
+│   ├── run_spatial_sorting.py           # Full pipeline: detect → features → SOM → eval
+│   ├── run_spatial_upper_bound.py       # Spatial feature comparison (oracle + SOM)
+│   ├── run_two_stage_upper_bound.py     # Two-stage oracle (GT centroids)
+│   ├── run_two_stage_unsupervised.py    # Unsupervised two-stage (no GT)
+│   ├── run_unsupervised_two_stage_sweep.py  # Cross-dataset unsupervised sweep
+│   ├── run_hj16_method_sweep.py         # Cross-scene HJ validation
+│   ├── run_mearec_method_sweep.py       # Cross-recording MEArec validation
+│   ├── run_lowbit_p2p.py                # P2P quantization bit-width sweep
+│   ├── sweep_som_params.py              # SOM hyperparameter grid search
+│   ├── validate_2d_grid.py              # 2D grid reference pipeline validation
+│   ├── verify_central_ratio_gate.py     # P2P representation comparison
+│   ├── verify_p2p_cim_approx.py         # CiM distance approximation verification
+│   ├── verify_waveform_cam_thermometer.py  # Waveform CAM encoding comparison
+│   ├── analyze_soft_loc_errors.py       # Error-pair analysis + FSDE rescue
+│   ├── run_multiscale_fpn.py            # Multi-scale FPN footprint fusion experiment
+│   ├── run_se_attention.py              # SE-Net channel attention experiment
+│   └── run_combined_mscale_se.py        # Combined multi-scale + SE-Net experiment
 │
 ├── evaluation/
-│   └── metrics.py                   # Clustering accuracy (Eq.10), ARI, P/R/F1
+│   └── metrics.py                       # Clustering accuracy (Eq. 10), detection P/R/F1
 │
-├── tests/
-│   ├── test_spatial_features.py     # Spatial feature unit tests (6 tests)
-│   ├── test_spatial_footprint.py    # Soft-loc / footprint unit tests
-│   ├── test_som_clustering.py       # SOM unit tests (5 tests)
-│   └── test_reference_port.py       # MATLAB port tests (18 tests)
+├── tests/                               # pytest unit tests per algorithm module
 │
-└── output/                          # Generated datasets + results (gitignored)
-    └── mearec_2d_grid_v2/           # Current 2D grid dataset (9.2 GB)
+├── docs/                                # Per-study write-ups with results tables
+│   ├── spatial_upper_bound.md
+│   ├── two_stage_upper_bound.md
+│   ├── two_stage_unsupervised.md
+│   ├── soft_loc_error_analysis.md
+│   ├── hj16_method_sweep.md
+│   ├── mearec_method_sweep.md
+│   ├── central_ratio_gate.md
+│   ├── central_ratio_vs_maxnorm_benchmark.md
+│   ├── p2p_cim_approx.md
+│   ├── waveform_cam_thermometer.md
+│   ├── multiscale_fpn.md                # Multi-scale FPN results
+│   ├── se_attention.md                  # SE-Net attention results
+│   └── combined_mscale_se.md            # Combined experiment results
+│
+└── output/                              # Generated CSVs and logs (gitignored)
 ```
 
 ---
 
 ## Datasets
 
-### 1. 2D Grid (Synthetic, Generated) — Primary Validation
-
-| Property | Value |
-|----------|-------|
-| Grid | 32x32 staggered (honeycomb), 36um pitch, 18um stagger |
-| Channels | 1024 |
-| Duration | 60s @ 20kHz per recording |
-| Neurons | 15 (min spacing 250um) |
-| SNR levels | 3, 5, 8, 12 |
-| Templates | Synthetic Gaussian EAP, sigma=30um, amp 300-800uV |
-| Size | 9.2 GB (4 recordings) |
-| Location | `output/mearec_2d_grid_v2/` |
-
-### 2. Hybrid Janelia (Semi-Synthetic)
-
-| Property | Value |
-|----------|-------|
-| Probe | 16ch linear, 20um spacing |
-| Duration | 600s @ 30kHz |
-| Units | 10 valid (SNR 8-16) |
-| Known issue | Units 5/21 share ch14, units 43/63 share ch7 |
-| Location | `../new_datasets/hybridjanelia/static16c_600s_11_filtered_gt.npz` |
-
-### 3. CortexLab Neuropixels (Experimental)
-
-| Property | Value |
-|----------|-------|
-| Probe | NP1, 128ch (64x2), 20um spacing |
-| Duration | 228.4s @ 30kHz (10% slice) |
-| Units | 10 (KS4 "good" units); ~6 unique spatial locations |
-| Note | Paper describes NP as "inadequate for high-density evaluation" |
-| Location | `../output/cortexlab_10pct/slices/dataset_1_20141202_228s_ksgt_int16.npz` |
+| Dataset | Probe | Channels | Duration | Units | SNR | Location |
+|---------|-------|----------|----------|-------|-----|----------|
+| Hybrid Janelia | 16ch linear, 20µm | 16 | 600s @ 30kHz | 10 | 8–16 | `../new_datasets/hybridjanelia/` |
+| MEArec v1 | 32ch linear | 32 | 60s @ 32kHz | 10 | 2–12 | `../synthetic_spike_dataset/generated/geoosort_npz_v1/` |
+| 2D Grid | 32×32 staggered, 36µm | 1024 | 60s @ 20kHz | 15 | 3–12 | `output/mearec_2d_grid_v2/` |
+| CortexLab NP | NP1 64×2, 20µm | 128 | 228s @ 30kHz | 10 | — | `../output/cortexlab_10pct/` |
 
 ---
 
-## Algorithm Summary
+## Algorithm Pipeline
 
-### Pipeline Overview
+### Generation 1: Akhoundi Reference
 
 ```
-Raw Data -> Bandpass -> Spike Detection (NEO) -> Spatial Features -> SOM Clustering
+Raw → Bandpass(300–6000Hz) → NEO Detection → Eq.3-5 Features (5D) → Modified SOM
 ```
 
-### Spatial Feature Extraction (Eq. 3-5)
+Works on 2D high-density probes; degenerates on 1D linear probes (angle collapses to ±π/2).
 
-For each spike with central channel `c` and neighbor amplitudes `A_i`:
+### Generation 2: soft_loc Spatial-Only
 
-- **Direction angle** (Eq. 3): `angle = atan2(sum(A_i * y_i), sum(A_i * x_i))`
-- **Distance ratio** (Eq. 4): `ratio = max(A_i) / A_c`
-- **Position estimate** (Eq. 5): `(x_c, y_c) + delta`
+```
+Raw → Bandpass → GT/Detected Spikes → Local P2P (K neighbors) → soft_loc (4D) → SOM
+```
 
-Output: 5D feature vector `[angle, ratio, x_est, y_est, peak_amp]`
+`soft_loc` = geometry-weighted center-of-mass (x,y) + spread + sharpness. Best spatial-only representation on 1D probes. Oracle 91.6%, SOM 83.3% on HJ 16ch.
 
-### Modified SOM Clustering
+### Generation 3: Unsupervised Two-Stage
 
-- **BMU update**: `centroid_new = ((alpha-1)*centroid_old + feature) / alpha` (alpha=16)
-- **Batch pruning**: remove elements with frequency < `N_spikes / (N_active * beta)`
-- **Merge**: combine centroids closer than `feature_extent / grid_size * 2`
-- Converge when active cluster count stabilizes
+```
+Stage 0: Spatial SOM (soft_loc) → within-cluster waveform SOM → hierarchical labels
+Stage 1: COM∧P2P gate (per-unit thresholds) → candidate units
+Stage 2: Nearest waveform centroid among candidates
+Fallback: Normalized COM+P2P score
+```
+
+Reaches 96.8% oracle on HJ. Fully unsupervised variant: ~81% HJ, ~79% MEArec.
+
+### Generation 4: CV-Inspired Enhancements (this work)
+
+**SE-Net per-cluster attention**: Weight each channel by the unit's time-averaged footprint profile (denoised Bayesian prior on the per-spike amplitude weights).
+
+| Method (HJ scene 11) | sep_ratio | Oracle | SOM |
+|----------------------|-----------|--------|-----|
+| baseline soft_loc | 0.336 | 0.916 | 0.833 |
+| oracle per-cluster attention | **0.229** | **0.966** | **0.962** |
+| SOM-discovered per-cluster (unsupervised) | 0.255 | 0.922 | **0.913** |
+
+**Multi-scale FPN**: Extract soft_loc at multiple K values and fuse. Marginal gains — best single-K (K=5) already matches fusion for SOM; high-dimensional concat hurts clustering.
+
+See `docs/se_attention.md`, `docs/multiscale_fpn.md`, `docs/combined_mscale_se.md`.
+
+---
+
+## CiM/CAM Hardware Approximations
+
+Verified that the float pipeline can be replaced by hardware-friendly encodings without losing the oracle ceiling:
+
+| Component | Float | CiM Approximation | Verified In |
+|-----------|-------|--------------------|-------------|
+| P2P distance | L2 | L1 on n-bit codes | `verify_p2p_cim_approx.py` |
+| P2P encoding | float | per-spike-max / central-ratio quantization | `run_lowbit_p2p.py` |
+| Waveform distance | L2 | Hamming on bipolar thermometer codes | `verify_waveform_cam_thermometer.py` |
+| Channel attention | float weights | Per-CAM-row conductance scaling | `se_attention.py` |
 
 ---
 
 ## Quick Start
 
 ```bash
-cd /data/xinyuan_work/SNN_SpikeSorting
-source .venv/bin/activate
+# Activate environment (requires numpy, scipy, h5py, scikit-learn)
+conda activate spint   # or: source .venv/bin/activate
 
-# Run all unit tests
+# Run unit tests
 python -m pytest Spatial/tests/ -v
 
-# Spatial-only upper bound on Hybrid Janelia (GT spikes, no FSDE/waveform PCA)
-python -m Spatial.experiments.run_spatial_upper_bound --dataset hj --duration 60 --use-gt
+# Spatial-only upper bound on HJ
+python -m Spatial.experiments.run_spatial_upper_bound --dataset hj --duration 60
 
-# Same study on CortexLab NP slice
-python -m Spatial.experiments.run_spatial_upper_bound --dataset cortexlab --duration 60 --use-gt
+# Unsupervised two-stage
+python -m Spatial.experiments.run_two_stage_unsupervised --duration 60
 
-# Validate 2D grid dataset (SNR=12, 10s)
-python -m Spatial.experiments.validate_2d_grid --snr 12 --duration 10
+# Multi-scale FPN experiment
+python -m Spatial.experiments.run_multiscale_fpn --duration 60 --sweep
 
-# Run spatial sorting on Hybrid Janelia
-python -m Spatial.experiments.run_spatial_sorting --dataset hj --duration 60 --use-gt
+# SE-Net attention experiment
+python -m Spatial.experiments.run_se_attention --duration 60
 
-# Generate new 2D grid dataset
-python -m Spatial.data.generate_2d_grid --output-dir Spatial/output/mearec_2d_grid_v2
+# Combined multi-scale + SE-Net
+python -m Spatial.experiments.run_combined_mscale_se --duration 60
 ```
 
-### Spatial-Only Upper Bound
+---
 
-`experiments/run_spatial_upper_bound.py` measures how much unit identity is
-recoverable from **spatial information alone** on 1D probes (HJ, CortexLab).
-No Peak-FSDE or temporal waveform PCA is used.
+## Key Results Summary
 
-| Method | Features |
+### HJ 16ch (scene 11, 10 units, 60s)
+
+| Method | Oracle | SOM | Note |
+|--------|--------|-----|------|
+| main_channel | 0.811 | 0.804 | trivial baseline |
+| Akhoundi Eq.3-5 | 0.763 | 0.626 | degenerate on 1D |
+| **soft_loc** | **0.916** | **0.833** | best spatial-only |
+| soft_loc K=5 | 0.919 | **0.912** | best single-K for SOM |
+| two-stage oracle (COM∧P2P→waveform) | **0.968** | — | GT centroids |
+| unsupervised two-stage | — | ~0.81 | no GT labels |
+| **per-cluster attention + soft_loc** | **0.966** | **0.962** | oracle attention |
+| **SOM-discovered per-cluster** | 0.922 | **0.913** | unsupervised attention |
+
+### MEArec 32ch (SNR=12, 10 units, 60s)
+
+All spatial methods near ceiling (~0.963 oracle, ~0.837 SOM). No significant differentiation between variants.
+
+### 2D Grid 1024ch (SNR=12, 15 neurons)
+
+| Method | Accuracy |
 |--------|----------|
-| `main_channel` | normalized central-channel index |
-| `akhoundi5` | paper Eq.3-5 angle / ratio / position |
-| `soft_loc` | geom-weighted COM + spread + sharpness (**best so far**) |
-| `footprint_p2p` | local K-neighbor P2P amplitude vector |
-| `footprint_pca` | PCA of the P2P footprint |
-
-For each method the script reports (1) **GT-centroid oracle** accuracy
-(chronological 50/50 train/test split) and (2) unsupervised **SpatialSOM** accuracy.
-See [`docs/spatial_upper_bound.md`](docs/spatial_upper_bound.md) for the detailed write-up.
-
----
-
-## Results
-
-### 2D Grid (15 neurons, sigma=30um, amp=300-800uV)
-
-Optimal params: grid=64, beta=4, alpha=16
-
-| SNR | CC Baseline | Spatial SOM | Clusters | Sep. Ratio |
-|-----|-------------|-------------|----------|------------|
-| 3   | 11.4%       | 17.2%       | 25/15    | 30.06      |
-| 5   | 44.2%       | 58.5%       | 19/15    | 3.06       |
-| 8   | 72.0%       | **89.2%**   | 16/15    | 0.77       |
-| 12  | 81.2%       | **92.1%**   | 15/15    | 0.61       |
-
-### Hybrid Janelia — Akhoundi pipeline (16ch linear)
-
-| Method | Accuracy | Note |
-|--------|----------|------|
-| CC Baseline | **79.9%** | Best method under Akhoundi features |
-| Spatial SOM (akhoundi5) | 67.5% | Degenerate: angle collapses to +/-pi/2 |
-
-### Hybrid Janelia — Spatial-only upper bound (60s, GT spikes)
-
-Protocol: bandpass → GT spike times → local P2P amplitudes (K=7) → feature variants →
-GT-centroid oracle + SpatialSOM (grid=32, beta=8). Raw table:
-`output/spatial_upper_bound_hj60s.csv`.
-
-| Method | Dim | Sep. Ratio | Oracle Acc | SOM Acc | Clusters |
-|--------|-----|------------|------------|---------|----------|
-| `main_channel` | 1 | 0.60 | 81.1% | 80.4% | 8/10 |
-| `akhoundi5` | 5 | 0.92 | 76.3% | 62.6% | 9/10 |
-| **`soft_loc`** | **4** | **0.34** | **91.6%** | **83.3%** | **10/10** |
-| `footprint_p2p` | 7 | 0.84 | 80.6% | 64.2% | 11/10 |
-| `footprint_pca` | 4 | 0.78 | 78.7% | 63.8% | 11/10 |
-
-**Winner: `soft_loc`.** On this 1D probe it raises the spatial-only oracle ceiling by
-~10.5 pp over main-channel and ~15.3 pp over Akhoundi Eq.3-5. Unsupervised SOM
-also peaks here (83.3%) and recovers the correct cluster count (10/10).
-
-### CortexLab NP (128ch linear)
-
-| Method | Accuracy | Note |
-|--------|----------|------|
-| CC Baseline | **86.3%** | Theoretical ceiling = 86.5% |
-| Spatial SOM | 79.0% | Collapsed to 1 cluster |
-
-### Cross-Dataset Comparison
-
-| Dataset | Probe Type | Channels | SOM Acc | CC Baseline | Spatial Value |
-|---------|-----------|----------|---------|-------------|---------------|
-| 2D Grid | 32x32 2D  | 1024     | 92.1%   | 81.2%       | **+10.9%**    |
-| HJ (Akhoundi) | 16ch 1D | 16     | 67.5%   | 79.9%       | -12.4%        |
-| HJ (`soft_loc`) | 16ch 1D | 16   | **83.3%** | 81.1% (main-ch oracle) | **+2.2% SOM / +10.5% oracle** |
-| NP      | 64x2 1D   | 128      | 79.0%   | 86.3%       | -7.3%         |
-
-### Key Findings
-
-1. **Spatial features require 2D high-density probes (Akhoundi features)**: On 2D grids (36um pitch), Akhoundi features add +10.9% over main-channel baseline at SNR=12.
-2. **Akhoundi features are degenerate on linear probes**: Direction angle collapses to +/-pi/2; on HJ they underperform even `main_channel` (oracle 76.3% vs 81.1%).
-3. **1D spatial information is not empty — use soft localization**: `soft_loc` (COM + spread + sharpness) is currently the best spatial-only representation on HJ (oracle 91.6%, SOM 83.3%).
-4. **Separability ratio is predictive**: When within-unit scatter / inter-unit distance < 1, clustering is strong (`soft_loc` sep=0.34). Akhoundi sep=0.92 correlates with its weaker accuracy.
-5. **Raw footprint vectors are not automatically better**: `footprint_p2p` / `footprint_pca` match main-channel at best; the compact COM/shape summary generalizes better under SOM.
-6. **Wired-OR is a hardware optimization, not an algorithm advantage**: In software, skipping Wired-OR and using direct thresholding yields 46.9% vs 21.5% (with Wired-OR) on the same data.
-7. **NP dataset confirms paper's own assessment**: Paper states NP is "inadequate for assessing the accuracy of a spike sorter designed for high-density recordings" — our Akhoundi results agree.
-
----
-
-## Reference Code Port
-
-`algorithms/reference_port.py` is a faithful Python port of the TU Delft MATLAB implementation:
-
-| Module | MATLAB Source | Python Function |
-|--------|--------------|-----------------|
-| Wired-OR | `WiredOR.m` | `wired_or_fast()` |
-| Hexagonal neighbors | `FindNeighborElec.m` | `find_neighbor_elec()`, `build_neighbor_table()` |
-| Feature extraction | `FeatureExrtaction.m` | `extract_features_reference()` |
-| Spike detection | `SpikeDetection.m` | `detect_spikes_reference()` |
-| SOM clustering | `Classification.m` | `ReferenceSOM` class |
-
-Key differences from our software implementation (`som_clustering.py`):
-- Reference uses 5-bit integer features clamped to [-31, 31] (hardware constraint)
-- Reference uses 5x5 local BMU search (hardware memory constraint)
-- Reference includes cluster migration (centroid relocates between grid cells)
-- Our version uses float features + global BMU search (software-optimized)
+| CC baseline | 81.2% |
+| Akhoundi spatial SOM | **92.1%** (+10.9pp) |
 
 ---
 
 ## Dependencies
 
 ```
-numpy, scipy          # core computation
-h5py                  # HDF5 dataset I/O
-scikit-learn          # KMeans (comparison only)
-pytest                # unit tests
+numpy, scipy, h5py, scikit-learn, pytest
 ```
 
-For data generation only (not required for running experiments):
-```
-MEArec, spikeinterface, probeinterface  # optional, for NEURON-based templates
-```
-
----
-
-## Disk Space Management
-
-| Item | Size | Status |
-|------|------|--------|
-| `output/mearec_2d_grid_v2/` | 9.2 GB | Current dataset |
-| `output/mearec_generated/` | 660 MB | **Obsolete** (delete) |
-| `output/mearec_2d_grid_test/` | 79 MB | **Obsolete** (delete) |
-
-Cleanup commands:
-```bash
-rm -rf Spatial/output/mearec_generated Spatial/output/mearec_2d_grid_test
-```
+Optional (data generation only): `MEArec, spikeinterface, probeinterface`
