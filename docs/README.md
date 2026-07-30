@@ -49,6 +49,14 @@ evaluation protocol.
   hardware conformance.
 - [`spatial_cim_sorting_provenance.md`](spatial_cim_sorting_provenance.md)
   — source/output digests and gate recomputation pointers.
+- [`geometric_prefilter_plan.md`](geometric_prefilter_plan.md) —
+  multi-method Level-1 routing pilot (A1/A2 first-trigger ±N, tile, Jaccard,
+  cosine, power-gate) with gates G-A / G-D / G-drift / G-E.
+- [`geometric_prefilter_results.md`](geometric_prefilter_results.md) —
+  G-D/G-E pass; G-A/G-drift fail; tile activation beats first-trigger ±N;
+  cosine ≈ L1 within 1 pp.
+- [`geometric_prefilter_provenance.md`](geometric_prefilter_provenance.md)
+  — source/output digests for the geometric prefilter sweep.
 - [`adaptive_multiprototype_5bit_plan.md`](adaptive_multiprototype_5bit_plan.md)
   — pre-registered hypothesis, alternatives considered, bit-exact row
   contract, static/online pilots, and explicit kill criteria.

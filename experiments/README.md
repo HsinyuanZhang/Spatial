@@ -10,6 +10,10 @@ commands, checked result tables, and negative findings belong under `../docs/`.
   - pooled versus per-unit L1/box search;
   - all-row, single-home, and multi-channel-support directories;
   - candidate recall, row activity, waveform reads, and final assignment.
+- `run_geometric_prefilter_sweep.py`
+  - A1/A2 first-trigger ±N, COM-tile, Jaccard, cosine, tile power-gate;
+  - locked four-recording 50/25/25 development pilot;
+  - gates G-A / G-D / G-drift / G-E (see `docs/geometric_prefilter_*.md`).
 - `run_dual_range_pipeline.py`
   - tight inner box;
   - ambiguity-triggered outer L1 search;

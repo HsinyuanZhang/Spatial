@@ -13,3 +13,10 @@ from .adaptive_weighted_range_search import AdaptiveWeightedRangeSearch
 from .causal_temporal_sketch import CausalTemporalSketch
 from .spatial_wta import SpatialWTAClassifier
 from .online_spatial_adaptation import OnlineSpatialAdapter
+from .geometric_prefilters import (
+    causal_first_channel,
+    index_neighborhood_unit_mask,
+    integer_cosine_scores,
+    jaccard_filter_mask,
+    proxy_max_channel,
+)

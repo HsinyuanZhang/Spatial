@@ -49,6 +49,7 @@ Spatial/
 │   ├── causal_temporal_baselines.py     # Frozen full64/tap/morphology teachers
 │   ├── spatial_wta.py                   # Biased integer WTA spatial classifier
 │   ├── online_spatial_adaptation.py     # Shift-EMA online centroid/theta updates
+│   ├── geometric_prefilters.py          # First-trigger ±N, tiles, Jaccard, cosine
 │   ├── cim_thermometer.py               # Bipolar thermometer CAM encoding (hardware approx)
 │   ├── multiscale_footprint.py          # Multi-K (FPN-style) footprint extraction + fusion
 │   └── se_attention.py                  # SE-Net channel attention (Fisher / variance / per-cluster)
@@ -79,6 +80,8 @@ Spatial/
 │   ├── run_spatial_attribution.py        # G4 attribution + G6 hardware conformance
 │   ├── run_spatial_online_drift.py       # G5 online EMA on HJ drift
 │   ├── run_spatial_unsupervised.py       # Quantized SOM + Hungarian Stage C
+│   ├── run_geometric_prefilter_sweep.py  # A–E geometric/CiM prefilter pilot
+│   ├── geometric_prefilter_common.py     # Shared eval + gates for prefilter sweep
 │   ├── run_dual_range_pipeline.py          # Inner-box / outer-L1 trigger study
 │   ├── run_certified_dual_range_pipeline.py # Per-unit Wilson safe-exit study
 │   ├── run_compact_waveform_refinement.py   # Frozen-candidate digital Level-2 sweep
@@ -317,6 +320,7 @@ silicon PPA evidence:
 | Unit-specific lane gating | all nine descriptor coordinates | 9-bit row mask over 5-bit absolute-difference lanes; HJ-positive development ablation only | `run_adaptive_masked_5bit.py` |
 | Unit-specific coordinate weighting | float/continuous weights | `{1,2,4}` shifts, nine active lanes, 11-bit sum, 74-bit logical row; HJ-positive but cross-family-negative pilot | `run_adaptive_weighted_5bit.py` |
 | Spatial WTA classifier | float L1 argmin | 5-bit biased/weighted integer WTA; G3/G4/G6 pass at 63 bit/unit | `spatial_wta.py`, `run_spatial_wta_pilot.py` |
+| Geometric prefilter | full-array L1 | first-trigger ±N, COM tile, Jaccard, cosine; tile+cosine pass development gates | `geometric_prefilters.py`, `run_geometric_prefilter_sweep.py` |
 | Coarse locality | one home row | per-unit multi-channel directory pointers | `run_adaptive_5bit_range_search.py` |
 | Waveform distance | L2 | Hamming on bipolar thermometer codes | `verify_waveform_cam_thermometer.py` |
 | Digital waveform refinement | float L1 | signed 5-bit SAD, shared/pair-conditioned taps | `run_compact_waveform_refinement.py`, `run_pair_conditioned_waveform.py` |
@@ -352,6 +356,9 @@ python -m Spatial.experiments.run_spatial_wta_pilot
 python -m Spatial.experiments.run_spatial_attribution
 python -m Spatial.experiments.run_spatial_wta_corpus \
   --score-mode stability --rank-profile top3_x4 --no-theta
+
+# Geometric / CiM prefilter multi-method pilot (A–E)
+python -m Spatial.experiments.run_geometric_prefilter_sweep --methods ALL
 
 # Nested inner-box / outer-L1 go/no-go
 python -m Spatial.experiments.run_dual_range_pipeline \
