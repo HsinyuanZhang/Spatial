@@ -33,6 +33,7 @@ from Spatial.algorithms.adaptive_range_search import (
 from Spatial.algorithms.detection import bandpass_filter, get_peak_amplitudes
 from Spatial.algorithms.spatial_footprint import (
     build_knn_table_with_self,
+    build_relative_patch_table,
     com_features,
     extract_local_p2p,
     footprint_p2p_features,
@@ -467,8 +468,24 @@ def _normalize_waveforms(waveforms: np.ndarray, eps: float = 1e-8) -> np.ndarray
     return waveforms / np.maximum(scale, eps)
 
 
-def prepare_dataset_events(dataset: Dataset, *, k_neighbors: int = 7, window: int = 15) -> dict[str, np.ndarray]:
-    """Prepare stable, GT-aligned descriptor and waveform rows for one recording."""
+def prepare_dataset_events(
+    dataset: Dataset,
+    *,
+    k_neighbors: int = 7,
+    window: int = 15,
+    footprint_layout: str = "knn",
+    p2p_estimator: str = "raw",
+    p2p_average_points: int = 1,
+) -> dict[str, np.ndarray]:
+    """Prepare stable, GT-aligned descriptor and waveform rows for one recording.
+
+    ``footprint_layout`` is ``knn`` (default) or ``relative`` (1D primary-axis
+    patch). ``p2p_estimator`` defaults to the historical single-sample range;
+    averaged estimators are opt-in and must record their temporal support.
+    """
+    layout = str(footprint_layout)
+    if layout not in ("knn", "relative"):
+        raise ValueError(f"footprint_layout must be 'knn' or 'relative', got {footprint_layout!r}")
     filtered = bandpass_filter(dataset.raw_data, dataset.fs)
     _, peak_times, central = get_peak_amplitudes(filtered, dataset.spike_times, window=window)
     labels = labels_for_peak_output(
@@ -479,9 +496,19 @@ def prepare_dataset_events(dataset: Dataset, *, k_neighbors: int = 7, window: in
     waveform_ok = peak_times + WAVEFORM_POST <= dataset.n_samples
     peak_times, central, labels = peak_times[waveform_ok], central[waveform_ok], labels[waveform_ok]
     k = min(int(k_neighbors), dataset.n_channels)
-    neighbor_table = build_knn_table_with_self(dataset.geom, k)
+    if layout == "knn":
+        neighbor_table = build_knn_table_with_self(dataset.geom, k)
+    else:
+        neighbor_table = build_relative_patch_table(dataset.geom, half_width=max(k // 2, 0))
+        k = int(neighbor_table.shape[1])
     p2p_raw, p2p_times, neighbor_ids = extract_local_p2p(
-        filtered, peak_times, central, neighbor_table, window=window
+        filtered,
+        peak_times,
+        central,
+        neighbor_table,
+        window=window,
+        p2p_estimator=p2p_estimator,
+        average_points=p2p_average_points,
     )
     assert np.array_equal(p2p_times, peak_times), "local P2P must preserve aligned event rows"
     assert p2p_raw.shape[0] == labels.size == central.size
@@ -497,6 +524,7 @@ def prepare_dataset_events(dataset: Dataset, *, k_neighbors: int = 7, window: in
         "times": peak_times[order], "labels": labels[order], "central": central[order],
         "descriptor": descriptor[order], "com": com[order], "p2p": p2p[order],
         "waveforms": waveforms[order],
+        "neighbor_ids": neighbor_ids[order],
     }
 
 

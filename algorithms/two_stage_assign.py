@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 import numpy as np
 
+from Spatial.algorithms.shift_match import shift_min_distance
+
 DistanceMetric = Literal["l2", "l1"]
 
 
@@ -34,6 +36,7 @@ def assign_nearest(
     features: np.ndarray,
     centroids: dict[int, np.ndarray],
     metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> np.ndarray:
     """Nearest-centroid labels for each row of features."""
     feats = np.asarray(features, dtype=np.float64)
@@ -43,12 +46,17 @@ def assign_nearest(
         return np.full(len(feats), -1, dtype=np.int64)
     units = np.array(sorted(centroids.keys()), dtype=np.int64)
     mat = np.stack([centroids[int(u)] for u in units], axis=0)
-    if metric == "l2":
-        dists = np.linalg.norm(feats[:, None, :] - mat[None, :, :], axis=2)
-    elif metric == "l1":
-        dists = np.sum(np.abs(feats[:, None, :] - mat[None, :, :]), axis=2)
+    if int(shift_radius) <= 0:
+        if metric == "l2":
+            dists = np.linalg.norm(feats[:, None, :] - mat[None, :, :], axis=2)
+        elif metric == "l1":
+            dists = np.sum(np.abs(feats[:, None, :] - mat[None, :, :]), axis=2)
+        else:
+            raise ValueError(f"Unknown metric: {metric}")
     else:
-        raise ValueError(f"Unknown metric: {metric}")
+        dists = shift_min_distance(
+            feats, mat, shift_radius=int(shift_radius), metric=metric
+        )
     return units[np.argmin(dists, axis=1)]
 
 
@@ -56,17 +64,31 @@ def _intra_unit_distances(
     features: np.ndarray,
     labels: np.ndarray,
     metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> np.ndarray:
     cents = fit_unit_centroids(features, labels)
     labs = np.asarray(labels).ravel()
     feats = np.asarray(features, dtype=np.float64)
     out = np.zeros(len(feats), dtype=np.float64)
-    for i, (x, u) in enumerate(zip(feats, labs)):
-        c = cents.get(int(u))
-        if c is None:
-            out[i] = np.nan
-        else:
-            out[i] = vector_distance(x, c, metric)
+    S = int(shift_radius)
+    if S <= 0:
+        for i, (x, u) in enumerate(zip(feats, labs)):
+            c = cents.get(int(u))
+            if c is None:
+                out[i] = np.nan
+            else:
+                out[i] = vector_distance(x, c, metric)
+        return out
+
+    units = np.array(sorted(cents.keys()), dtype=np.int64)
+    if units.size == 0:
+        return np.full(len(feats), np.nan)
+    mat = np.stack([cents[int(u)] for u in units], axis=0)
+    unit_to_col = {int(u): j for j, u in enumerate(units)}
+    dists = shift_min_distance(feats, mat, shift_radius=S, metric=metric)
+    for i, u in enumerate(labs):
+        j = unit_to_col.get(int(u))
+        out[i] = np.nan if j is None else float(dists[i, j])
     return out
 
 
@@ -77,10 +99,17 @@ def calibrate_thresholds(
     percentile: float = 95.0,
     com_metric: DistanceMetric = "l2",
     p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> tuple[float, float]:
-    """τ_com, τ_p2p from pooled intra-unit distance percentiles on train."""
-    d_com = _intra_unit_distances(com, labels, metric=com_metric)
-    d_p2p = _intra_unit_distances(p2p, labels, metric=p2p_metric)
+    """τ_com, τ_p2p from pooled intra-unit distance percentiles on train.
+
+    When ``shift_radius > 0``, P2P intra-unit distances use shift-min; COM is
+    unchanged (no shift).
+    """
+    d_com = _intra_unit_distances(com, labels, metric=com_metric, shift_radius=0)
+    d_p2p = _intra_unit_distances(
+        p2p, labels, metric=p2p_metric, shift_radius=int(shift_radius)
+    )
     d_com = d_com[np.isfinite(d_com)]
     d_p2p = d_p2p[np.isfinite(d_p2p)]
     if d_com.size == 0 or d_p2p.size == 0:
@@ -134,9 +163,20 @@ def stage1_normalized_score(
     tau_p2p: float,
     com_metric: DistanceMetric = "l2",
     p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> float:
     d_com = vector_distance(com_x, com_c, com_metric)
-    d_p2p = vector_distance(p2p_x, p2p_c, p2p_metric)
+    if int(shift_radius) <= 0:
+        d_p2p = vector_distance(p2p_x, p2p_c, p2p_metric)
+    else:
+        d_p2p = float(
+            shift_min_distance(
+                np.asarray(p2p_x, dtype=np.float64).reshape(1, -1),
+                np.asarray(p2p_c, dtype=np.float64).reshape(1, -1),
+                shift_radius=int(shift_radius),
+                metric=p2p_metric,
+            )[0, 0]
+        )
     return d_com / max(float(tau_com), 1e-8) + d_p2p / max(float(tau_p2p), 1e-8)
 
 
@@ -149,17 +189,96 @@ def stage1_candidates(
     tau_p2p: float,
     com_metric: DistanceMetric = "l2",
     p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> list[int]:
-    """Units that pass both COM and P2P gates."""
+    """Units that pass both COM and P2P gates.
+
+    When ``shift_radius > 0``, P2P uses shift-min distance; COM is plain.
+    """
     cands: list[int] = []
-    for u in sorted(com_centroids.keys()):
-        if u not in p2p_centroids:
-            continue
+    S = int(shift_radius)
+    units = [u for u in sorted(com_centroids.keys()) if u in p2p_centroids]
+    if not units:
+        return cands
+
+    if S <= 0:
+        for u in units:
+            d_com = vector_distance(com_x, com_centroids[u], com_metric)
+            d_p2p = vector_distance(p2p_x, p2p_centroids[u], p2p_metric)
+            if d_com < tau_com and d_p2p < tau_p2p:
+                cands.append(int(u))
+        return cands
+
+    mat = np.stack([p2p_centroids[u] for u in units], axis=0)
+    d_p2p_all = shift_min_distance(
+        np.asarray(p2p_x, dtype=np.float64).reshape(1, -1),
+        mat,
+        shift_radius=S,
+        metric=p2p_metric,
+    )[0]
+    for j, u in enumerate(units):
         d_com = vector_distance(com_x, com_centroids[u], com_metric)
-        d_p2p = vector_distance(p2p_x, p2p_centroids[u], p2p_metric)
-        if d_com < tau_com and d_p2p < tau_p2p:
+        if d_com < tau_com and float(d_p2p_all[j]) < tau_p2p:
             cands.append(int(u))
     return cands
+
+
+def stage1_gate_matrix(
+    com_test: np.ndarray,
+    p2p_test: np.ndarray,
+    com_centroids: dict[int, np.ndarray],
+    p2p_centroids: dict[int, np.ndarray],
+    tau_com: float,
+    tau_p2p: float,
+    com_metric: DistanceMetric = "l2",
+    p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
+) -> tuple[np.ndarray, list[int]]:
+    """Vectorized batch stage-1 COM∧P2P gate.
+
+    Computes every (event, unit) gate decision in two batched distance
+    evaluations instead of the per-event Python loop used by
+    :func:`stage1_candidates`.  Returned candidate lists are bit-for-bit
+    identical to calling ``stage1_candidates`` per row.
+
+    Returns
+    -------
+    gate_mask:
+        ``(n_events, n_units)`` boolean — True where both COM and P2P gates pass.
+    units:
+        Sorted unit ids matching the columns of ``gate_mask``.
+    """
+    com = np.asarray(com_test, dtype=np.float64)
+    p2p = np.asarray(p2p_test, dtype=np.float64)
+    if com.ndim != 2 or p2p.ndim != 2 or com.shape[0] != p2p.shape[0]:
+        raise ValueError("com_test and p2p_test must be 2D with matching row count")
+    units = [u for u in sorted(com_centroids.keys()) if u in p2p_centroids]
+    if not units or com.shape[0] == 0:
+        return np.empty((com.shape[0], 0), dtype=bool), units
+    com_mat = np.stack([com_centroids[u] for u in units], axis=0)  # (U, Dc)
+    p2p_mat = np.stack([p2p_centroids[u] for u in units], axis=0)  # (U, Dp)
+
+    if com_metric == "l2":
+        d_com = np.linalg.norm(com[:, None, :] - com_mat[None, :, :], axis=2)
+    elif com_metric == "l1":
+        d_com = np.sum(np.abs(com[:, None, :] - com_mat[None, :, :]), axis=2)
+    else:
+        raise ValueError(f"Unknown com_metric: {com_metric}")
+
+    S = int(shift_radius)
+    if S <= 0:
+        if p2p_metric == "l2":
+            d_p2p = np.linalg.norm(p2p[:, None, :] - p2p_mat[None, :, :], axis=2)
+        elif p2p_metric == "l1":
+            d_p2p = np.sum(np.abs(p2p[:, None, :] - p2p_mat[None, :, :]), axis=2)
+        else:
+            raise ValueError(f"Unknown p2p_metric: {p2p_metric}")
+    else:
+        # shift_min_distance returns (n_events, n_units) already.
+        d_p2p = shift_min_distance(p2p, p2p_mat, shift_radius=S, metric=p2p_metric)
+
+    gate = (d_com < float(tau_com)) & (d_p2p < float(tau_p2p))
+    return gate, units
 
 
 def two_stage_assign(
@@ -175,11 +294,13 @@ def two_stage_assign(
     tau_p2p: float | None = None,
     com_metric: DistanceMetric = "l2",
     p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """COM∧P2P gate then nearest waveform centroid; empty → stage-1 fallback."""
     com_cents = fit_unit_centroids(com_train, labels_train)
     p2p_cents = fit_unit_centroids(p2p_train, labels_train)
     wave_cents = fit_unit_centroids(wave_train, labels_train)
+    S = int(shift_radius)
 
     if tau_com is None or tau_p2p is None:
         tau_com_c, tau_p2p_c = calibrate_thresholds(
@@ -189,6 +310,7 @@ def two_stage_assign(
             percentile=percentile,
             com_metric=com_metric,
             p2p_metric=p2p_metric,
+            shift_radius=S,
         )
         if tau_com is None:
             tau_com = tau_com_c
@@ -210,6 +332,7 @@ def two_stage_assign(
             float(tau_p2p),
             com_metric=com_metric,
             p2p_metric=p2p_metric,
+            shift_radius=S,
         )
         n_cand_sizes.append(len(cands))
         if cands:
@@ -222,6 +345,7 @@ def two_stage_assign(
                     com_test[i], p2p_test[i], com_cents, p2p_cents,
                     float(tau_com), float(tau_p2p),
                     com_metric=com_metric, p2p_metric=p2p_metric,
+                    shift_radius=S,
                 )
         else:
             n_fallback += 1
@@ -229,6 +353,7 @@ def two_stage_assign(
                 com_test[i], p2p_test[i], com_cents, p2p_cents,
                 float(tau_com), float(tau_p2p),
                 com_metric=com_metric, p2p_metric=p2p_metric,
+                shift_radius=S,
             )
 
     meta = {
@@ -236,6 +361,7 @@ def two_stage_assign(
         "tau_p2p": float(tau_p2p),
         "com_metric": com_metric,
         "p2p_metric": p2p_metric,
+        "shift_radius": S,
         "n_fallback": int(n_fallback),
         "fallback_rate": float(n_fallback / max(n, 1)),
         "mean_n_candidates": float(np.mean(n_cand_sizes)) if n_cand_sizes else 0.0,
@@ -301,6 +427,7 @@ def _fallback_stage1(
     tau_p2p: float,
     com_metric: DistanceMetric = "l2",
     p2p_metric: DistanceMetric = "l2",
+    shift_radius: int = 0,
 ) -> int:
     best_u = -1
     best_s = np.inf
@@ -310,6 +437,7 @@ def _fallback_stage1(
         s = stage1_normalized_score(
             com_x, p2p_x, com_cents[u], p2p_cents[u], tau_com, tau_p2p,
             com_metric=com_metric, p2p_metric=p2p_metric,
+            shift_radius=int(shift_radius),
         )
         if s < best_s:
             best_s = s

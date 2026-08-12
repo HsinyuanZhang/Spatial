@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import numpy as np
 
 from Spatial.algorithms.spatial_footprint import (
     build_knn_table_with_self,
+    build_relative_patch_table,
     central_ratio_features,
     com_features,
     extract_local_p2p,
@@ -37,6 +38,8 @@ FEATURE_SETS = (
     "soft_loc_p2p",
     "central_ratio",
 )
+
+FootprintLayout = Literal["knn", "relative"]
 
 
 def sha256_json(value: Any) -> str:
@@ -87,9 +90,12 @@ def prepare_spatial_events(
     dataset,
     *,
     k_neighbors: int = 7,
+    footprint_layout: FootprintLayout = "knn",
     permute_geom: bool | np.ndarray | None = None,
     permute_slots: bool | np.ndarray | None = None,
     seed: int = 0,
+    p2p_estimator: str = "raw",
+    p2p_average_points: int = 1,
 ) -> dict[str, Any]:
     """Prepare multi-feature spatial rows plus central and neighborhood waveforms.
 
@@ -97,7 +103,18 @@ def prepare_spatial_events(
     - ``permute_geom``: shuffle electrode geometry so COM is meaningless.
     - ``permute_slots``: apply a fixed permutation to P2P neighborhood slots so
       the footprint layout is meaningless while the value multiset is identical.
+
+    ``footprint_layout``:
+    - ``knn``: distance-ranked neighbors (slot 0 = home); enables ``central_ratio``.
+    - ``relative``: fixed primary-axis offsets (center slot = home); OOB = -1 / P2P 0.
+      ``central_ratio`` is omitted (it assumes KNN slot 0).
     """
+    layout = str(footprint_layout)
+    if layout not in ("knn", "relative"):
+        raise ValueError(
+            f"footprint_layout must be 'knn' or 'relative', got {footprint_layout!r}"
+        )
+
     filtered = bandpass_filter(
         dataset.raw_data, dataset.fs, FILTER_LOW_HZ, FILTER_HIGH_HZ, FILTER_ORDER
     )
@@ -129,14 +146,29 @@ def prepare_spatial_events(
             geom_perm = np.asarray(permute_geom, dtype=np.int64)
         geom = geom[geom_perm]
 
-    table = build_knn_table_with_self(geom, min(k_neighbors, dataset.n_channels))
+    k = min(int(k_neighbors), dataset.n_channels)
+    if layout == "knn":
+        table = build_knn_table_with_self(geom, k)
+    else:
+        half_width = max(k // 2, 0)
+        table = build_relative_patch_table(geom, half_width=half_width)
+        k = int(table.shape[1])
+
     p2p, returned, neighbors = extract_local_p2p(
-        filtered, times, central, table, window=PRE_ALIGNMENT_SAMPLES
+        filtered,
+        times,
+        central,
+        table,
+        window=PRE_ALIGNMENT_SAMPLES,
+        p2p_estimator=p2p_estimator,
+        average_points=p2p_average_points,
     )
     assert np.array_equal(returned, times)
 
     slot_perm = None
     if permute_slots is not None and permute_slots is not False:
+        if layout == "relative":
+            raise ValueError("permute_slots is only supported with footprint_layout='knn'")
         rng = np.random.default_rng(seed + 1)
         if permute_slots is True:
             # Keep slot 0 (self/central) fixed; permute the rest.
@@ -150,15 +182,15 @@ def prepare_spatial_events(
     com = com_features(p2p, neighbors, geom)
     soft = soft_localization_features(p2p, neighbors, geom)
     p2p_norm = footprint_p2p_features(p2p, normalize=True)
-    ratio = central_ratio_features(p2p)
     features = {
         "com_only": com,
         "p2p_only": p2p_norm,
         "com_and_p2p": np.column_stack([com, p2p_norm]),
         "soft_loc": soft,
         "soft_loc_p2p": np.column_stack([soft, p2p_norm]),
-        "central_ratio": ratio,
     }
+    if layout == "knn":
+        features["central_ratio"] = central_ratio_features(p2p)
 
     # Central-channel 64-sample waveforms (existing temporal teacher input).
     raw_central = np.stack(
@@ -168,12 +200,15 @@ def prepare_spatial_events(
         ]
     )
     # Multi-channel neighborhood waveforms: K channels x 64 samples, flattened.
-    k = neighbors.shape[1]
-    neigh_wave = np.empty((times.size, k * WINDOW), dtype=np.float64)
+    # OOB neighbor ids (-1) contribute zeros.
+    neigh_wave = np.zeros((times.size, k * WINDOW), dtype=np.float64)
     for i, (t, nbrs) in enumerate(zip(times, neighbors)):
         start = int(t) - PRE_ALIGNMENT_SAMPLES
         stop = int(t) + POST_ALIGNMENT_SAMPLES + 1
-        neigh_wave[i] = filtered[nbrs, start:stop].reshape(-1)
+        for j, ch_j in enumerate(nbrs):
+            if int(ch_j) < 0:
+                continue
+            neigh_wave[i, j * WINDOW : (j + 1) * WINDOW] = filtered[int(ch_j), start:stop]
 
     order = np.argsort(times, kind="stable")
     result = {
@@ -190,6 +225,7 @@ def prepare_spatial_events(
         "geom_permutation": None if geom_perm is None else geom_perm.tolist(),
         "slot_permutation": None if slot_perm is None else slot_perm.tolist(),
         "k_neighbors": int(k_neighbors),
+        "footprint_layout": layout,
     }
     return result
 
