@@ -122,6 +122,13 @@ waveform stage to contribute than these four recordings suggest.
 
 ## A third diagnostic: the descriptor is noise-limited, not capacity-limited
 
+Runner: `run_posneg_bitwidth_sweep.py`, which also renders the curve.
+
+```bash
+python -m Spatial.experiments.run_posneg_bitwidth_sweep --quiet
+# -> output/posneg_bitwidth_sweep/posneg_bitwidth_curve.png
+```
+
 The registered Phase A grid tested only 4 and 5 bits for `POSNEG`, and 4 beat 5
 on every development recording. That is the edge of the grid, so it could not
 show where the optimum actually sits. Sweeping wider on the broader corpus of

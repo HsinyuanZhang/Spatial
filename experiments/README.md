@@ -28,6 +28,7 @@ dataset, split, filtering, aggregation, and provenance rules.
 | Does an independent recomputation agree that the Phase A gate passed? | `audit_shape_descriptor_gates.py` | same result record, "Independent verification" |
 | Does the descriptor survive a causal filter and ±2-sample alignment jitter? | `run_shape_causal_boundary.py` | **Causal passes, jitter fails**; same record, "Phase A2" |
 | Does the shape descriptor move the 0.99-recall/4x-traffic frontier? | `run_shape_candidate_traffic.py` | **Negative**; same record, "Phase B" |
+| Where is the POSNEG code-width optimum, and does more precision help? | `run_posneg_bitwidth_sweep.py` | [`LEVEL1_ROADMAP.md`](../docs/LEVEL1_ROADMAP.md), "noise-limited, not capacity-limited" |
 
 The shape-descriptor branch is closed with no selected configuration. Its
 runners are retained because the negative results are design evidence.
