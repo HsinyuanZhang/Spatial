@@ -350,9 +350,30 @@ The `LAT` and `WIDTH` columns are the fragile part and are the natural thing to
 drop: they cost 29 bits, contribute at most 0.4 pp over `com_posneg`, and are
 the source of the jitter failure.
 
+### Follow-up diagnostic: why the frontier did not move
+
+Recorded here because it is the most useful thing this branch produced.
+
+| Arm | Normalized intra-unit distance | Positive margin | Mean candidates at ≥0.99 recall |
+|---|---:|---:|---:|
+| `d9`, HJ | 0.0670 | 0.798 | 8.07 |
+| `com_posneg`, HJ | 0.0232 | 0.917 | 7.68 |
+| `d9`, MEArec | 0.0803 | 0.773 | 12.06 |
+| `com_posneg`, MEArec | 0.0308 | 0.849 | 12.84 |
+
+Unit clouds tightened by about 2.9x and margins improved by 8 to 12 points,
+while the candidate count at 0.99 recall stayed flat and grew slightly on
+MEArec. If the bulk tightens 3x and the required radius does not, the radius is
+being set by the **tail** of the intra-unit distribution rather than its bulk.
+A better representation compresses the bulk and leaves the tail where it was.
+
+That is why no descriptor change can move this frontier, and it is the basis of
+[`LEVEL1_ROADMAP.md`](LEVEL1_ROADMAP.md).
+
 ## Next step
 
-Two candidates, in priority order.
+See [`LEVEL1_ROADMAP.md`](LEVEL1_ROADMAP.md) for the programme-level plan. The
+two items owned by this branch are:
 
 1. **Register `com_posneg` on the confirmation sets.** It is a registered arm
    that appears both cheaper (66 bits) and more robust than the selected arm,

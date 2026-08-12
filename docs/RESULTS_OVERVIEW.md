@@ -197,6 +197,13 @@ candidate lists lose the true unit.
 | Spatial WTA classifier | Selected 5-bit stability-weighted L1 passes attribution and bit-conformance gates | Accuracy, online drift, and unsupervised gates do not all pass |
 | Tile activation / cosine | Tile routing clears high-recall local gates; cosine stays near L1 | First-detect routing fails and this does not by itself solve candidate traffic |
 
+The shape-descriptor branch sharpened this into a specific diagnosis. Its
+`com_posneg` arm made unit clouds about 2.9x tighter in normalized intra-unit
+distance and improved the positive margin by 8 to 12 points, yet the candidate
+count at 0.99 recall did not shrink. The radius is therefore set by the tail of
+the intra-unit distribution, not its bulk, so a better representation cannot fix
+this. See [`LEVEL1_ROADMAP.md`](LEVEL1_ROADMAP.md) for the resulting plan.
+
 Detailed sources:
 
 - [`adaptive_5bit_range_search.md`](adaptive_5bit_range_search.md)

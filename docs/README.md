@@ -13,6 +13,7 @@ you need exact evidence.
 | [`REPRODUCING.md`](REPRODUCING.md) | Environment, datasets, commands, splits, metrics, and artifact discipline |
 | [`../experiments/README.md`](../experiments/README.md) | Runner-to-question and runner-to-document map |
 | [`COM_P2P_HANDOFF.md`](COM_P2P_HANDOFF.md) | Chinese project handoff and motivation for the relative-offset/ShiftCAM branch |
+| [`LEVEL1_ROADMAP.md`](LEVEL1_ROADMAP.md) | Where Level-1 candidate search goes next, and why ten scoring-function branches all failed the same gate |
 
 The result records remain in a flat directory on purpose. Historical commands,
 relative links, paper references, and SHA-256 manifests depend on their current
