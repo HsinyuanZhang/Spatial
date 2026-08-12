@@ -122,12 +122,23 @@ waveform stage to contribute than these four recordings suggest.
 
 ## A third diagnostic: the descriptor is noise-limited, not capacity-limited
 
+![POSNEG code width versus assignment accuracy ceiling](figures/posneg_bitwidth_curve.png)
+
+The left panel is the event-weighted family mean, with the second axis giving
+the stored bits per cluster row and the grey band marking the current D9/B5
+descriptor. The right panel shows all 16 individual recordings, so the inverted
+U is visibly not an averaging artefact.
+
 Runner: `run_posneg_bitwidth_sweep.py`, which also renders the curve.
 
 ```bash
 python -m Spatial.experiments.run_posneg_bitwidth_sweep --quiet
 # -> output/posneg_bitwidth_sweep/posneg_bitwidth_curve.png
 ```
+
+`docs/figures/posneg_bitwidth_curve.png` is a committed snapshot of that output
+so the figure renders here. Regenerating the runner does not update the
+snapshot; refresh it deliberately if the underlying numbers change.
 
 The registered Phase A grid tested only 4 and 5 bits for `POSNEG`, and 4 beat 5
 on every development recording. That is the edge of the grid, so it could not
