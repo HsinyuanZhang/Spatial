@@ -113,6 +113,48 @@ seeing these results, so only the oracle bound is selection-free. This needs to
 become a registered experiment on the confirmation sets before it drives a
 design decision.
 
+**Scope warning.** The 0.9334 HJ spatial figure above is the mean over the two
+HJ *development* recordings. Over the full 12-scene HJ corpus the same
+descriptor reaches about 0.836. The development pair is easier than the corpus,
+so the waveform comparison must be repeated on the broader corpus before its
+conclusion is relied on: a lower spatial baseline leaves more room for the
+waveform stage to contribute than these four recordings suggest.
+
+## A third diagnostic: the descriptor is noise-limited, not capacity-limited
+
+The registered Phase A grid tested only 4 and 5 bits for `POSNEG`, and 4 beat 5
+on every development recording. That is the edge of the grid, so it could not
+show where the optimum actually sits. Sweeping wider on the broader corpus of
+12 HJ scenes and 4 MEArec SNR5 files:
+
+| `POSNEG` bits | Row bits | HJ | MEArec |
+|---:|---:|---:|---:|
+| 2 | 38 | 0.8006 | 0.8361 |
+| 3 | 52 | **0.8393** | 0.8614 |
+| 4 | 66 | 0.8359 | **0.8709** |
+| 5 | 80 | 0.8272 | 0.8626 |
+| 6 | 94 | 0.8113 | 0.8498 |
+
+The curve is an inverted U with an interior optimum at 3 to 4 bits. Six-bit
+codes at 94 bits per row are **worse on both families** than 3-bit codes at 52
+bits per row, and even 2-bit codes at 38 bits beat 6-bit on HJ.
+
+The effect is largest exactly where it matters: on `drift16c_600s_11`, accuracy
+falls from 0.900 at 4 bits to 0.732 at 6 bits, a 17-point collapse.
+
+The mechanism is that `POSNEG` codes are per-event normalized amplitude ratios.
+Extra precision resolves amplitude fluctuation that is noise and drift rather
+than identity, and the integer template mean then chases it. Coarse
+quantization is acting as a regularizer, not as a lossy compromise.
+
+**Consequence for the row budget.** A 66-bit row is not a constraint to be
+relaxed; it is at or slightly past the optimum. Spending more bits per cluster
+makes the sorter worse. Any future proposal that asks for a wider row must
+first explain why it escapes this curve.
+
+This also means the standing "5-bit is enough" framing across the repository is
+backwards for this descriptor: 5 bits is already past peak on both families.
+
 ## Directions, in priority order
 
 ### 1. Separate the tail instead of covering it
