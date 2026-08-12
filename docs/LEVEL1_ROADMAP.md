@@ -70,6 +70,49 @@ compresses the bulk and leaves the tail roughly where it was.
 This reframes the problem. Level-1 is not a representation problem. It is a
 **tail-handling and policy problem**.
 
+## A second diagnostic: how much is the waveform stage still worth?
+
+The entire two-level memory hierarchy exists to make expensive waveform-template
+reads rare. That premise assumes the waveform stage carries a large part of the
+accuracy. With the improved spatial descriptor it no longer does.
+
+Measured on the four locked development recordings, identical event rows,
+`com_posneg` spatial argmin against main-channel 64-sample float waveform
+argmin, both over all units:
+
+| Quantity | HJ | MEArec |
+|---|---:|---:|
+| Spatial only (`com_posneg`) | 0.9334 | 0.8562 |
+| Waveform only | 0.7510 | 0.6392 |
+| **Either correct (oracle bound on any combiner)** | **0.9536** | **0.8894** |
+| Best measured combiner | 0.9516 | 0.8888 |
+| Share of spatial errors the waveform can rescue | 30.7% | 25.1% |
+
+Three things follow.
+
+1. **Waveform information is genuinely complementary but small.** It rescues a
+   quarter to a third of the remaining spatial errors, and no combiner can
+   extract more than **+2.0 pp on HJ and +3.3 pp on MEArec**, because that is
+   the oracle bound of "either one is right".
+2. **A simple combiner already reaches that bound.** A weighted sum of
+   per-event range-normalized distances lands within 0.2 pp of the oracle on
+   HJ and essentially on it for MEArec, so there is no sophistication left to
+   exploit in this waveform representation.
+3. **Waveform cannot stand alone**, at 0.75 and 0.64, which is consistent with
+   the older Peak-FSDE finding of roughly 0.48. It discards location.
+
+The architectural consequence is uncomfortable. Level-2 costs 320 bits per unit
+of template storage, the candidate-read traffic that the whole Level-1 programme
+is trying to reduce, and 1.6 ms of acquisition latency to reach `t+48` at
+30 kHz. It buys 2 to 3 points. Whether that trade is worth making is now a
+legitimate design question rather than an assumption.
+
+Caveats: four development recordings, GT events and rows, zero-phase filtering,
+float waveforms rather than low-bit, and the combiner weight was chosen after
+seeing these results, so only the oracle bound is selection-free. This needs to
+become a registered experiment on the confirmation sets before it drives a
+design decision.
+
 ## Directions, in priority order
 
 ### 1. Separate the tail instead of covering it
@@ -110,7 +153,14 @@ Two specific questions deserve a written answer before more engineering:
 - **Is 0.99 the right recall target?** It is only meaningful if a Level-1 miss
   is unrecoverable. If a cheap Level-2 or a fallback can recover a fraction of
   misses, the system-level requirement is lower than 0.99 and the whole frontier
-  moves.
+  moves. The waveform diagnostic above sharpens this: if Level-2 is worth only
+  2 to 3 points, then protecting its input with a 0.99-recall gate is a large
+  cost incurred to protect a small benefit.
+- **Is a two-level hierarchy still the right architecture?** A spatial-only
+  sorter at 0.933 HJ and 0.856 MEArec, with no template reads and no `t+48`
+  acquisition wait, is now a serious baseline rather than a strawman. The
+  correct comparison for any Level-2 proposal is against that, not against the
+  older 0.80-class spatial descriptor.
 - **Is template count the right cost unit?** The gate counts distinct template
   reads. If templates are small and the real cost is energy per row comparison
   or per activated tile, then a policy that reads more templates but activates
