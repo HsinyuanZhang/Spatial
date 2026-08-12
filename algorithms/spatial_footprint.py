@@ -6,7 +6,81 @@ local neighborhood around each spike's central channel, plus electrode geometry.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
+
+
+P2PEstimator = Literal[
+    "raw",
+    "centered_mean",
+    "moving_average",
+    "extreme_mean",
+]
+
+
+def primary_axis(geom: np.ndarray) -> int:
+    """Return 0 or 1: coordinate axis with larger variance."""
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    if g.shape[0] == 0:
+        return 1
+    return 1 if float(np.var(g[:, 1])) >= float(np.var(g[:, 0])) else 0
+
+
+def channel_rank_along_axis(geom: np.ndarray, axis: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Stable rank of channels along ``axis`` (default: primary).
+
+    Returns:
+        order: (C,) channel indices sorted by geom[:, axis]
+        rank: (C,) rank of each channel in that order
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    ax = primary_axis(g) if axis is None else int(axis)
+    if ax not in (0, 1):
+        raise ValueError(f"axis must be 0 or 1, got {ax}")
+    order = np.argsort(g[:, ax], kind="stable")
+    rank = np.empty(g.shape[0], dtype=np.int64)
+    rank[order] = np.arange(g.shape[0], dtype=np.int64)
+    return order, rank
+
+
+def build_relative_patch_table(
+    geom: np.ndarray,
+    half_width: int = 3,
+    axis: int | None = None,
+) -> np.ndarray:
+    """Per-home relative-offset patch table along one probe axis.
+
+    Slot ``j`` corresponds to rank offset ``j - half_width`` from the home
+    channel. Out-of-bounds slots are ``-1``.
+
+    Returns:
+        (n_channels, 2*half_width+1) int64 channel ids.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    half = int(half_width)
+    if half < 0:
+        raise ValueError(f"half_width must be >= 0, got {half_width}")
+    n_channels = g.shape[0]
+    k = 2 * half + 1
+    if n_channels == 0:
+        return np.zeros((0, k), dtype=np.int64)
+
+    order, rank = channel_rank_along_axis(g, axis=axis)
+    table = np.full((n_channels, k), -1, dtype=np.int64)
+    for ch in range(n_channels):
+        home_rank = int(rank[ch])
+        for j, delta in enumerate(range(-half, half + 1)):
+            r = home_rank + delta
+            if 0 <= r < n_channels:
+                table[ch, j] = int(order[r])
+    return table
 
 
 def build_knn_table_with_self(geom: np.ndarray, k_neighbors: int) -> np.ndarray:
@@ -25,12 +99,85 @@ def build_knn_table_with_self(geom: np.ndarray, k_neighbors: int) -> np.ndarray:
     return table
 
 
+def estimate_p2p_amplitude(
+    segment: np.ndarray,
+    *,
+    estimator: P2PEstimator = "raw",
+    average_points: int = 1,
+) -> float:
+    """Estimate one channel's peak-to-peak amplitude.
+
+    ``raw`` is the existing single-sample ``max(x)-min(x)`` baseline.
+
+    ``centered_mean`` first finds the raw maximum and minimum, then averages a
+    contiguous odd-width neighborhood around each selected index. This is the
+    direct interpretation of "average 3--5 points around the peaks", but an
+    impulsive noise sample can still choose the two neighborhood centers.
+
+    ``moving_average`` applies an odd-width valid boxcar before taking the
+    range. A streaming implementation needs a running sum and extrema
+    registers; for a fixed width, division by ``average_points`` may be
+    postponed or cancelled by later per-event footprint normalization.
+
+    ``extreme_mean`` subtracts the mean of the globally smallest k samples
+    from the mean of the globally largest k samples. It is a non-adjacent
+    order-statistic diagnostic and is not assumed to be hardware-cheap.
+    """
+    values = np.asarray(segment, dtype=np.float64).ravel()
+    if values.size == 0:
+        raise ValueError("segment must contain at least one sample")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("segment must contain only finite samples")
+
+    mode = str(estimator)
+    if mode not in ("raw", "centered_mean", "moving_average", "extreme_mean"):
+        raise ValueError(f"Unknown P2P estimator: {estimator}")
+
+    width = int(average_points)
+    if isinstance(average_points, bool) or width != average_points or width < 1:
+        raise ValueError("average_points must be a positive integer")
+    if width > values.size:
+        raise ValueError("average_points cannot exceed the segment length")
+    if width % 2 == 0:
+        raise ValueError("average_points must be odd for a centered P2P estimator")
+    if mode == "raw":
+        if width != 1:
+            raise ValueError("raw P2P requires average_points=1")
+        return float(np.max(values) - np.min(values))
+
+    if mode == "moving_average":
+        kernel = np.full(width, 1.0 / float(width), dtype=np.float64)
+        smoothed = np.convolve(values, kernel, mode="valid")
+        return float(np.max(smoothed) - np.min(smoothed))
+
+    if mode == "extreme_mean":
+        if 2 * width > values.size:
+            raise ValueError(
+                "extreme_mean requires at least 2*average_points samples"
+            )
+        lower = np.partition(values, width - 1)[:width]
+        upper = np.partition(values, values.size - width)[-width:]
+        return float(np.mean(upper) - np.mean(lower))
+
+    # centered_mean: keep exactly ``width`` contiguous samples even when a raw
+    # extremum occurs at a segment boundary.
+    half = width // 2
+
+    def _mean_around(index: int) -> float:
+        start = min(max(int(index) - half, 0), values.size - width)
+        return float(np.mean(values[start : start + width]))
+
+    return _mean_around(int(np.argmax(values))) - _mean_around(int(np.argmin(values)))
+
+
 def extract_local_p2p(
     signal: np.ndarray,
     spike_times: np.ndarray,
     central_channels: np.ndarray,
     neighbor_table: np.ndarray,
     window: int = 15,
+    p2p_estimator: P2PEstimator = "raw",
+    average_points: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Extract local-neighborhood P2P amplitudes around each spike.
 
@@ -40,6 +187,10 @@ def extract_local_p2p(
         central_channels: (n_spikes,) home channel per spike.
         neighbor_table: (n_channels, K) including self.
         window: half-window samples on each side of the spike time.
+        p2p_estimator: ``raw``, ``centered_mean``, ``moving_average``, or
+            ``extreme_mean``. The default preserves the historical result.
+        average_points: odd temporal support. Must be 1 for ``raw``; the new
+            pilot registers only 3 and 5 for averaged estimators.
 
     Returns:
         p2p: (n_valid, K) peak-to-peak amplitudes.
@@ -67,8 +218,15 @@ def extract_local_p2p(
         ch = int(np.clip(ch, 0, n_channels - 1))
         nbr = nbr_table[ch]
         neighbor_ids[i] = nbr
-        seg = sig[nbr, t - window : t + window]
-        p2p[i] = np.max(seg, axis=1) - np.min(seg, axis=1)
+        for j, ch_j in enumerate(nbr):
+            if int(ch_j) < 0:
+                continue
+            seg = sig[int(ch_j), t - window : t + window]
+            p2p[i, j] = estimate_p2p_amplitude(
+                seg,
+                estimator=p2p_estimator,
+                average_points=average_points,
+            )
 
     return p2p, times, neighbor_ids
 
@@ -180,9 +338,15 @@ def soft_localization_features(
         return np.empty((0, 4), dtype=np.float64)
 
     amp = np.maximum(amp, 0.0)
+    valid = nbr >= 0
+    amp = np.where(valid, amp, 0.0)
     mass = np.sum(amp, axis=1, keepdims=True)
     weights = amp / np.maximum(mass, eps)
-    xy = g[nbr]
+
+    # Safe gather: OOB slots (-1) map to a dummy coordinate then get zero weight.
+    safe_nbr = np.where(valid, nbr, 0)
+    xy = g[safe_nbr]
+    xy = np.where(valid[:, :, None], xy, 0.0)
     centroid = np.sum(weights[:, :, None] * xy, axis=1)
 
     geom_min = np.min(g, axis=0)
@@ -192,6 +356,7 @@ def soft_localization_features(
     centroid_norm[:, active] = (centroid[:, active] - geom_min[active]) / geom_span[active]
 
     squared_radius = np.sum((xy - centroid[:, None, :]) ** 2, axis=2)
+    squared_radius = np.where(valid, squared_radius, 0.0)
     probe_diag = max(float(np.linalg.norm(geom_span)), eps)
     spread = np.sqrt(np.sum(weights * squared_radius, axis=1)) / probe_diag
     sharpness = np.max(weights, axis=1)
@@ -254,3 +419,201 @@ def footprint_pca_features(
     _, _, vt = np.linalg.svd(xc, full_matrices=False)
     components = vt[:n_comp]
     return xc @ components.T
+
+
+def extract_local_extrema(
+    signal: np.ndarray,
+    spike_times: np.ndarray,
+    central_channels: np.ndarray,
+    neighbor_table: np.ndarray,
+    window: int = 15,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Extract per-slot local max/min values and first-occurrence indices."""
+    sig = np.asarray(signal, dtype=np.float64)
+    times = np.asarray(spike_times, dtype=np.int64).ravel()
+    homes = np.asarray(central_channels, dtype=np.int64).ravel()
+    nbr_table = np.asarray(neighbor_table, dtype=np.int64)
+
+    if sig.ndim != 2:
+        raise ValueError(f"signal must be 2D, got {sig.shape}")
+    if times.size != homes.size:
+        raise ValueError("spike_times and central_channels length mismatch")
+    if nbr_table.ndim != 2:
+        raise ValueError(f"neighbor_table must be 2D, got {nbr_table.shape}")
+
+    n_channels, n_samples = sig.shape
+    if nbr_table.shape[0] != n_channels:
+        raise ValueError("neighbor_table row count must match n_channels")
+    if isinstance(window, bool) or not isinstance(window, (int, np.integer)):
+        raise ValueError(f"window must be an int, got {window}")
+    win = int(window)
+    if win < 1:
+        raise ValueError(f"window must be >= 1 for a nonempty segment, got {window}")
+
+    k = nbr_table.shape[1]
+    valid_mask = (times >= win) & (times < n_samples - win)
+    times = times[valid_mask]
+    homes = homes[valid_mask]
+    n = times.size
+
+    vmax = np.zeros((n, k), dtype=np.float64)
+    vmin = np.zeros((n, k), dtype=np.float64)
+    imax = np.zeros((n, k), dtype=np.int64)
+    imin = np.zeros((n, k), dtype=np.int64)
+    neighbor_ids = np.zeros((n, k), dtype=np.int64)
+
+    for i, (t, ch) in enumerate(zip(times, homes)):
+        ch = int(np.clip(ch, 0, n_channels - 1))
+        nbr = nbr_table[ch]
+        neighbor_ids[i] = nbr
+        valid_j = nbr >= 0
+        if not np.any(valid_j):
+            continue
+        sample_idx = np.arange(int(t) - win, int(t) + win, dtype=np.int64)
+        ch_ids = nbr[valid_j].astype(np.int64, copy=False)
+        segs = sig[ch_ids[:, None], sample_idx[None, :]]
+        vmax[i, valid_j] = np.max(segs, axis=1)
+        vmin[i, valid_j] = np.min(segs, axis=1)
+        imax[i, valid_j] = np.argmax(segs, axis=1)
+        imin[i, valid_j] = np.argmin(segs, axis=1)
+
+    return vmax, vmin, imax, imin, times, neighbor_ids
+
+
+def _in_bounds_p2p_scale(
+    vmax: np.ndarray,
+    vmin: np.ndarray,
+    neighbor_ids: np.ndarray,
+    eps: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-row P2P, in-bounds mask, and scale floored at eps."""
+    if vmax.shape != vmin.shape or vmax.shape != neighbor_ids.shape:
+        raise ValueError("vmax, vmin, and neighbor_ids shape mismatch")
+    if vmax.ndim != 2:
+        raise ValueError(f"Expected 2D arrays, got {vmax.shape}")
+
+    p2p = vmax - vmin
+    in_bounds = neighbor_ids >= 0
+    masked = np.where(in_bounds, p2p, -np.inf)
+    scale = np.maximum(np.max(masked, axis=1, keepdims=True), float(eps))
+    return p2p, in_bounds, scale
+
+
+def slot_liveness(
+    vmax: np.ndarray,
+    vmin: np.ndarray,
+    neighbor_ids: np.ndarray,
+    amp_gate: float = 0.25,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Return per-slot liveness mask from amplitude gate and per-event scale."""
+    vmax = np.asarray(vmax, dtype=np.float64)
+    vmin = np.asarray(vmin, dtype=np.float64)
+    neighbor_ids = np.asarray(neighbor_ids, dtype=np.int64)
+
+    gate = float(amp_gate)
+    if not np.isfinite(gate) or gate < 0.0 or gate > 1.0:
+        raise ValueError(f"amp_gate must be a finite float in [0.0, 1.0], got {amp_gate}")
+
+    p2p, in_bounds, scale = _in_bounds_p2p_scale(vmax, vmin, neighbor_ids, eps)
+    return in_bounds & (p2p >= gate * scale)
+
+
+def posneg_codes(
+    vmax: np.ndarray,
+    vmin: np.ndarray,
+    neighbor_ids: np.ndarray,
+    n_bits: int = 5,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Quantize positive and negative peak amplitudes into separate code halves."""
+    if isinstance(n_bits, bool) or not isinstance(n_bits, (int, np.integer)):
+        raise ValueError(f"n_bits must be an int in [1, 16], got {n_bits}")
+    n_bits = int(n_bits)
+    if n_bits < 1 or n_bits > 16:
+        raise ValueError(f"n_bits must be an int in [1, 16], got {n_bits}")
+
+    vmax = np.asarray(vmax, dtype=np.float64)
+    vmin = np.asarray(vmin, dtype=np.float64)
+    neighbor_ids = np.asarray(neighbor_ids, dtype=np.int64)
+
+    _, in_bounds, scale = _in_bounds_p2p_scale(vmax, vmin, neighbor_ids, eps)
+    max_level = float((1 << n_bits) - 1)
+
+    pos = np.rint(max_level * np.maximum(vmax, 0.0) / scale)
+    neg = np.rint(max_level * np.maximum(-vmin, 0.0) / scale)
+    pos = np.clip(pos, 0.0, max_level)
+    neg = np.clip(neg, 0.0, max_level)
+    pos = np.where(in_bounds, pos, 0.0)
+    neg = np.where(in_bounds, neg, 0.0)
+    return np.concatenate([pos, neg], axis=1)
+
+
+def latency_codes(
+    imin: np.ndarray,
+    live: np.ndarray,
+    home_slot: int,
+    n_bits: int = 4,
+) -> np.ndarray:
+    """Cross-channel trough-latency codes with the home slot column removed."""
+    if isinstance(n_bits, bool) or not isinstance(n_bits, (int, np.integer)):
+        raise ValueError(f"n_bits must be an int in [2, 8], got {n_bits}")
+    n_bits = int(n_bits)
+    if n_bits < 2 or n_bits > 8:
+        raise ValueError(f"n_bits must be an int in [2, 8], got {n_bits}")
+    if isinstance(home_slot, bool) or not isinstance(home_slot, (int, np.integer)):
+        raise ValueError(f"home_slot must be a valid column index, got {home_slot}")
+
+    imin = np.asarray(imin, dtype=np.int64)
+    live = np.asarray(live)
+    if imin.ndim != 2:
+        raise ValueError(f"imin must be 2D, got {imin.shape}")
+    if live.shape != imin.shape:
+        raise ValueError("imin and live shape mismatch")
+
+    n, k = imin.shape
+    home = int(home_slot)
+    if home < 0 or home >= k:
+        raise ValueError(f"home_slot must be a valid column index, got {home_slot}")
+
+    limit = float((1 << (n_bits - 1)) - 1)
+    home_imin = imin[:, home : home + 1].astype(np.float64)
+    raw = imin.astype(np.float64) - home_imin
+    code = np.clip(raw, -limit, limit) + limit
+    code = np.where(live, code, limit)
+
+    keep = [j for j in range(k) if j != home]
+    return code[:, keep]
+
+
+def width_codes(
+    imax: np.ndarray,
+    imin: np.ndarray,
+    home_slot: int,
+    n_bits: int = 5,
+) -> np.ndarray:
+    """Home-channel trough-to-peak width code."""
+    if isinstance(n_bits, bool) or not isinstance(n_bits, (int, np.integer)):
+        raise ValueError(f"n_bits must be an int in [2, 8], got {n_bits}")
+    n_bits = int(n_bits)
+    if n_bits < 2 or n_bits > 8:
+        raise ValueError(f"n_bits must be an int in [2, 8], got {n_bits}")
+    if isinstance(home_slot, bool) or not isinstance(home_slot, (int, np.integer)):
+        raise ValueError(f"home_slot must be a valid column index, got {home_slot}")
+
+    imax = np.asarray(imax, dtype=np.int64)
+    imin = np.asarray(imin, dtype=np.int64)
+    if imax.shape != imin.shape:
+        raise ValueError("imax and imin shape mismatch")
+    if imax.ndim != 2:
+        raise ValueError(f"imax must be 2D, got {imax.shape}")
+
+    _, k = imax.shape
+    home = int(home_slot)
+    if home < 0 or home >= k:
+        raise ValueError(f"home_slot must be a valid column index, got {home_slot}")
+
+    off = float((1 << (n_bits - 1)) - 1)
+    raw = imax[:, home].astype(np.float64) - imin[:, home].astype(np.float64)
+    code = np.clip(raw, -off, off + 1.0) + off
+    return code[:, None]
