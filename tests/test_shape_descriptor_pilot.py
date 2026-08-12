@@ -324,14 +324,18 @@ def test_evaluation_cache_key_deduplication_contract() -> None:
     assert evaluation_cache_key("com_posneg", 4, 3, 0.125) != evaluation_cache_key("com_posneg", 5, 3, 0.125)
 
 
-@pytest.mark.skipif(
-    not __import__("pathlib").Path(
-        "/home/xinyuan/SNN_SpikeSorting/new_datasets/hybridjanelia/static16c_600s_11_filtered_gt.npz"
-    ).exists(),
-    reason="HJ development data unavailable",
-)
 def test_locked_hj_recording_smoke() -> None:
-    from Spatial.data.loader import load_hybrid_janelia
+    """Guard on the loader's own resolution, not on a hardcoded absolute path."""
+    from pathlib import Path
+
+    from Spatial.data.loader import load_hybrid_janelia, resolve_hybrid_janelia_path
+
+    try:
+        resolved = Path(resolve_hybrid_janelia_path(scene="static16c_600s_11"))
+    except Exception as error:
+        pytest.skip(f"HJ development data unavailable: {error}")
+    if not resolved.exists():
+        pytest.skip(f"HJ development data unavailable: {resolved}")
 
     dataset = load_hybrid_janelia(scene="static16c_600s_11", duration_s=1.0)
     rows = evaluate_recording(dataset, family="hj")
@@ -339,20 +343,16 @@ def test_locked_hj_recording_smoke() -> None:
     assert set(rows[0].keys()) == set(CSV_FIELDNAMES)
 
 
-@pytest.mark.skipif(
-    not __import__("pathlib").Path(
-        "/home/xinyuan/SNN_SpikeSorting/synthetic_spike_dataset/generated/geoosort_npz_v1/"
-        "rec_v1_units10_snr5_seed202601.npz"
-    ).exists(),
-    reason="MEArec development data unavailable",
-)
 def test_locked_mearec_recording_smoke() -> None:
-    from Spatial.data.loader import load_mearec_npz
+    from pathlib import Path
 
-    path = (
-        "/home/xinyuan/SNN_SpikeSorting/synthetic_spike_dataset/generated/geoosort_npz_v1/"
-        "rec_v1_units10_snr5_seed202601.npz"
-    )
+    from Spatial.data.loader import load_mearec_npz
+    from Spatial.experiments.run_mearec_method_sweep import DEFAULT_NPZ_DIR
+
+    path = Path(DEFAULT_NPZ_DIR) / "rec_v1_units10_snr5_seed202601.npz"
+    if not path.exists():
+        pytest.skip(f"MEArec development data unavailable: {path}")
+
     dataset = load_mearec_npz(path, duration_s=1.0)
     rows = evaluate_recording(dataset, family="mearec")
     assert rows[0]["mearec_n_units"] == 10
