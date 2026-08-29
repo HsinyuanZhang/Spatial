@@ -221,3 +221,39 @@ def test_two_stage_assign_code_p2p_uses_unit_row_map():
     assert int(pred[0]) == 9
     assert meta["tau_p2p_codes"] >= 1
     assert meta["p2p_metric"] == "code_l1"
+
+
+def test_stage1_gate_matrix_matches_per_event_candidates():
+    """Vectorized batch gate must equal per-event stage1_candidates bit-for-bit."""
+    from Spatial.algorithms.two_stage_assign import stage1_gate_matrix
+
+    rng = np.random.default_rng(123)
+    n_units = 5
+    com_cents = {u: rng.uniform(0, 1, size=2) for u in range(n_units)}
+    p2p_cents = {u: rng.uniform(0, 1, size=4) for u in range(n_units)}
+    tau_com, tau_p2p = 0.35, 0.6
+    n_events = 40
+    com_test = rng.uniform(0, 1, size=(n_events, 2))
+    p2p_test = rng.uniform(0, 1, size=(n_events, 4))
+
+    for com_metric in ("l2", "l1"):
+        for p2p_metric in ("l2", "l1"):
+            for S in (0, 1, 2):
+                gate, units = stage1_gate_matrix(
+                    com_test, p2p_test, com_cents, p2p_cents,
+                    tau_com, tau_p2p,
+                    com_metric=com_metric, p2p_metric=p2p_metric,
+                    shift_radius=S,
+                )
+                for i in range(n_events):
+                    ref = set(stage1_candidates(
+                        com_test[i], p2p_test[i], com_cents, p2p_cents,
+                        tau_com, tau_p2p,
+                        com_metric=com_metric, p2p_metric=p2p_metric,
+                        shift_radius=S,
+                    ))
+                    vec = {units[j] for j in range(len(units)) if gate[i, j]}
+                    assert ref == vec, (
+                        f"metric={com_metric},{p2p_metric} S={S} event={i}: "
+                        f"ref={sorted(ref)} vec={sorted(vec)}"
+                    )

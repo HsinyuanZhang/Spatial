@@ -14,6 +14,26 @@ you need exact evidence.
 | [`../experiments/README.md`](../experiments/README.md) | Runner-to-question and runner-to-document map |
 | [`COM_P2P_HANDOFF.md`](COM_P2P_HANDOFF.md) | Chinese project handoff and motivation for the relative-offset/ShiftCAM branch |
 | [`LEVEL1_ROADMAP.md`](LEVEL1_ROADMAP.md) | Where Level-1 candidate search goes next, and why ten scoring-function branches all failed the same gate |
+| [`mapping_row_v0_results.md`](mapping_row_v0_results.md) | Interval / weighted-violation mapping-row v0: development gate fail, stop |
+| [`temporal_representation_decomp_results.md`](temporal_representation_decomp_results.md) | Level-2 dictionary vs quantization vs horizon behind frozen D9 p99.9 candidates |
+| [`bulk_tail_escalation_results.md`](bulk_tail_escalation_results.md) | Tight p90 inner + empty-list outer p99.9: kill on D9 and `com_posneg` |
+| [`ro_ss_qda_results.md`](ro_ss_qda_results.md) | RO-POSNEG regularized QDA vs mean L1/L2: assignment up, co-home/correlation gate fail |
+| [`deformable_spatial_template.md`](deformable_spatial_template.md) | Identity vs trackable POSNEG state: deployment + Phase-1 results (stop) |
+| [`deformable_spatial_template_results.md`](deformable_spatial_template_results.md) | Result-only copy of the same Phase-1 stop |
+| [`posneg_mvm_shift_drift.md`](posneg_mvm_shift_drift.md) | Combined deployment + Q1–Q8 results for MVM / POSNEG / shift / causal tracking |
+| [`ema_star_identity_convergence.md`](ema_star_identity_convergence.md) | Identity freeze + fair EMA* / Oracle-EMA baseline; answers whether STAR-Mem needs a safer updater or an explicit drift model |
+| [`tracked_home_and_com_state.md`](tracked_home_and_com_state.md) | 60 s vs 600 s are different problems: COM is the state observable; channel/home must be tracked, not frozen |
+| [`com_tracking_range.md`](com_tracking_range.md) | Isolated COM tracking on 600 s: a 5 s hold stays in a 20 µm row; frozen fit does not; ~7 % of spikes already sit outside the contemporaneous true unit COM (oracle ceiling) |
+| [`drift_estimator_diagnostics.md`](drift_estimator_diagnostics.md) | Amplitude bias of the deployed shift estimator and the EMA collapse dimension law; **reopens Q5**, scopes \(\eta^*\) to \(K=12\) |
+| [`drift_estimator_diagnostics_provenance.md`](drift_estimator_diagnostics_provenance.md) | Commands, digests, determinism check, and the amendments recorded against other documents |
+| [`drift_window_budget.md`](drift_window_budget.md) | How much drift the 600 s recording actually contains vs the locked 60 s window; **reclassifies Q6's natural-HJ arm as untested**, shows real motion exceeds the \(\pm0.5\) pitch shift grid, and shows the frozen per-unit home channel goes stale for 8 of 11 units |
+| [`drift_window_budget_provenance.md`](drift_window_budget_provenance.md) | Commands, digests, determinism check, contract tests, and the amendments recorded against other documents |
+| [`posneg_mvm_shift_drift_plan.md`](posneg_mvm_shift_drift_plan.md) | Frozen protocol (independent of Mapping Row and free deformable templates) |
+| [`posneg_mvm_shift_drift_results.md`](posneg_mvm_shift_drift_results.md) | Result-only copy of Q1–Q4 |
+| [`drift_tracking_results.md`](drift_tracking_results.md) | Result-only copy of Q5–Q8 |
+| [`posneg_mvm_shift_drift_provenance.md`](posneg_mvm_shift_drift_provenance.md) | Commands, SHA-256, skipped conditional arms |
+| [`yger_ks4_pseudo_gt.md`](yger_ks4_pseudo_gt.md) | How the Yger 252-ch KS4 Th=13 pseudo-GT was produced and how Spatial loads it |
+| [`yger_com_direct_assign.md`](yger_com_direct_assign.md) | Direct nearest-centroid COM / main-channel / low-bit COM on that Yger KS4 input |
 
 The result records remain in a flat directory on purpose. Historical commands,
 relative links, paper references, and SHA-256 manifests depend on their current
@@ -218,6 +238,14 @@ causal_temporal_sketch_outputs.sha256
 
 - [`spatial_upper_bound.md`](spatial_upper_bound.md) — spatial-only feature
   ceiling and why `soft_loc` helps on 1D probes.
+- [`yger_com_direct_assign.md`](yger_com_direct_assign.md) — Yger 252-ch KS4
+  pseudo-GT: nearest-centroid main-channel vs float/low-bit COM, including
+  3-pitch same-spike exclusion (local diagnostic; not a system-gate result).
+- [`ks4sim_no_drift_com.md`](ks4sim_no_drift_com.md) — same COM / main-channel
+  protocol on the Kilosort4-paper `sim_no_drift` Neuropixels GT (1200 units),
+  including home-gated residual, `(home, n-bit)` codebook, and 4–6-bit signed
+  ADC. Paper-facing packing summary:
+  [`../../DAC2027/notes/DENSE_PACKING_EVIDENCE.md`](../../DAC2027/notes/DENSE_PACKING_EVIDENCE.md).
 - [`hj16_method_sweep.md`](hj16_method_sweep.md) — Hybrid Janelia cross-scene
   spatial and two-stage comparison.
 - [`mearec_method_sweep.md`](mearec_method_sweep.md) — MEArec cross-recording

@@ -3,7 +3,7 @@
 Status: **Active planning document.** Written 2026-08-12 after the
 shape-orthogonal descriptor branch closed with no selected configuration.
 
-This is a decision document, not a result record. It exists because roughly ten
+This is a decision document, not a result record. It exists because a dozen
 distinct Level-1 approaches have now failed the same joint gate, and the
 accumulated negative evidence has become specific enough to redirect the work
 rather than to suggest another variation.
@@ -29,6 +29,8 @@ Every branch below cleared some local gate and none cleared this one.
 | Tile activation / cosine | tile routing clears local gates | does not address candidate traffic |
 | Shift-min multi-copy rows | +0.4 pp argmin | 5 rows per unit for nothing on the frontier |
 | **Shape-orthogonal descriptor** | **+10.65 / +8.21 pp assignment** | **no frontier movement at all** |
+| Mapping-row interval / weighted-violation | J0 still 0.99 / 1.3× | interval interiors collapse the true/interferer gap |
+| Empty-inner → outer p99.9 (D9 and `com_posneg`) | 4–9× traffic | recall 0.89–0.93; nonempty wrong inner lists never escalate |
 
 Ten approaches, one common structure: each changed the **scoring function** or
 the **row format**, and none changed the fact that a single acceptance region
@@ -201,6 +203,12 @@ all events, not the mean over the fast path.
 0.99 end-to-end recall on both families, the escalation architecture is not the
 answer either, and that should be recorded as strongly as the ten entries above.
 
+**Result (2026-08-25).** Killed on both D9 and `com_posneg`. Traffic including
+escalation is 4–9×, but end-to-end recall is 0.89–0.93 because nonempty inner
+lists that miss the true unit never escalate. Outer p99.9 still has 0.99
+recall at ~1.3×. See [`bulk_tail_escalation_results.md`](bulk_tail_escalation_results.md).
+Do not sweep the inner percentile.
+
 ### 2. Ask whether the gate is well posed
 
 **Idea.** With 10 to 20 units and a 0.99 recall requirement, 4x reduction means
@@ -231,6 +239,26 @@ re-derives the gate from a stated cost model or states plainly that the gate is
 a target inherited without derivation. Either outcome is progress; the current
 situation, where every branch is measured against a threshold nobody has
 justified, is not.
+
+**Note (2026-08-25).** The 0.99/4× pair is an inherited DAC target, not a
+derived cost model. After twelve spatial scoring failures, the bulk/tail kill,
+and the waveform-rescue bound of +2–3 pp, the honest reading is:
+
+- 0.99 candidate recall is only mandatory if a Level-1 miss is unrecoverable
+  *and* Level-2 is worth protecting. The teacher behind p99.9 candidates is
+  ~0.77, and waveform rescue of spatial errors is 25–31%. A miss that falls
+  back to spatial argmin costs ~2–3 pp, not a collapsed sorter.
+- 4× vs 64×5 is the wrong unit on dense probes. The NP codebook already
+  delivers 46.5× row reduction at 0.99 recall, and Yger's 70 µm ball delivers
+  12.4×, because occupancy not scoring is the bottleneck. On 10–20 unit
+  HJ/MEArec recordings the same 4× asks for 2.5–5 candidates out of 10–20
+  while covering a tail that one region cannot cover.
+- Keep 0.99/4× as a *reported* operating point. Stop using it as the only
+  kill switch for every Level-1 idea. Report recall, mean `|C|`, and a
+  spatial-only accuracy baseline next to any Level-2 claim.
+
+This does not authorize moving the Overleaf 85–93% unique-ID sentence, and
+it does not reopen mask/weight/percentile grids.
 
 ### 3. Multiple acceptance regions per unit, tested properly
 

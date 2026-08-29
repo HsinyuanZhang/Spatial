@@ -1,7 +1,7 @@
 # COM-P2P Spike Sorting 方案 Handoff（含 ShiftCAM 新方向）
 
 > 本文档供多 AI agent / 协作者 brainstorm 使用。目标是统一上下文，聚焦下一步方案设计。
-> 最后更新：2026-08-06
+> 最后更新：2026-08-21
 > 仓库：本仓库（Spatial）是 STAR-Mem spike sorting 的算法 + 实验主体。
 > 数据集（`new_datasets/`）、论文工程（`DAC2027/`）位于同级父仓库 `SNN_SpikeSorting`。
 
@@ -13,7 +13,7 @@
 
 1. **Home channel 跳动**：P2P footprint 的 slot 含义跨 spike 不一致 → CiM 难以直接映射
 2. **Drift（漂移）全部失败**：static range、online EMA、multi-prototype 均未通过门槛
-3. **高密度 2D 探针未验证**
+3. **高密度探针 unique-ID 失败已实测**（Yger 252-ch 2-D MEA、KS4 `sim_no_drift` 384-ch）：主因是每电极多个 unit，不是单细胞 drift。COM/main-channel WTA 不能当分类器；Yger 上 COM 半径门可做候选球。Joint 0.99-recall/4× gate 仍未过。
 
 **最新方向**：借鉴 [ShiftCAM (ICCAD 2024)](https://dl.acm.org/doi/10.1145/3676536.3676800) 的 Shifted Hamming Distance 思想，将 P2P footprint 改为**相对 home 的物理偏移列**，并做 **shift-min 匹配**，统一解决 home 跳动 + drift + CiM 映射三个问题。
 
@@ -79,11 +79,49 @@ NPZ schema：`recording (C,S)`, `geom (C,2)`, `event_times`, `event_labels`, `ev
 
 **注意**：20 个文件是 4 种时间配置 × 5 种 SNR 渲染，**不是独立生物学重复**，不得当作独立证据汇总。
 
-### 2.3 其他（次要，未进入 DAC 主线）
+### 2.3 Yger 252-ch 2-D MEA（Zenodo 1205233，已进 DAC packing 节）
+
+| 属性 | 值 |
+|---|---|
+| 探针 | MCS 16×16，30 µm，252 extra 通道，20 kHz |
+| 生物学 GT | **每段 1 个 juxta 细胞**（文献也只给这个细胞打 accuracy） |
+| Spatial 伪 GT | KS4 Th=13：362 cluster / 314 `good`；60 s train 358 |
+| 位置抖动 | KS4 `spike_positions` 中位 RMS **3.5 µm**（< 间距） |
+| 60 s 事件 | 60 600 |
+| Home | 全阵列 trough 21% 落在 90 µm 外（重叠偷 home，不是 drift） |
+| 3-pitch unique-ID | main-channel 指数 10.8%；home (x,y) 45.6%；COM float **56.0%** |
+| COM 半径门 | R=70 µm 召回 0.990、均 29/358 类、12.4×；名单内 WTA 仍 ~55% |
+| Oversplit | 启发式 14 对可合并；无时间对半互斥；不是「314→200」 |
+| HDD | `/mnt/data/.../zenodo_1205233_*`（禁止拷到 SSD） |
+
+文献打分方式：Yger 2018 / SpikeForest paired-64ch / SpikeInterface 8/19 筛选，都是 **juxta 那一个细胞** 的 coincidence，不是 300 个 cluster 的普查。
+
+细节：`docs/yger_ks4_pseudo_gt.md`，`docs/yger_com_direct_assign.md`。DAC 账本 C18–C20、C22。
+
+### 2.4 KS4-paper `sim_no_drift`（Figshare 25298815，已进 DAC packing 节）
+
+| 属性 | 值 |
+|---|---|
+| 探针 | Neuropixels 384 AP，30 kHz，纵间距 20 µm |
+| GT | 模拟器真标签，**1200 unit**，全长 45 min |
+| 60 s | 428 261 事件，1200 个 unit 都开火 |
+| Occupancy | 338/384 电极占用，**3.55 unit/占用电极**（最多 40）；93.6% 共用电极 |
+| 拥挤上限 | 完美 majority-home 查找 **56.4%** unique-ID |
+| 3-pitch main-channel | **19.1%**（oracle majority home 28.0%） |
+| COM float | **17.0%**（相对 1/1200 约 204×，与 Yger COM 的「相对随机」同量级） |
+| 远端偷 home | 3-pitch 后仅 **1.3%**；全局 trough **60.7%**（中位 421 µm → 分类 0.48%） |
+| HDD | zip 内 cbin 流式读前 60 s，不拷 SSD |
+
+**19% 的主因是同电极拥挤，不是远处 spike。** 关掉 3-pitch 才会变成远端盗窃。
+
+细节：`docs/ks4sim_no_drift_com.md`。DAC 账本 C21。
+
+### 2.5 其他（次要）
 
 - 2D Grid 1024ch（32×32 honeycomb）— legacy，未用新管线重跑
 - CortexLab NP（128ch）— pending re-run
 - Quiroga 单通道 — 用于 SpikingJelly SNN 管线
+- Figshare `sim_fast_drift` 等 — 2026-08-20 仍在 HDD 下载（约 87%）
 
 ---
 

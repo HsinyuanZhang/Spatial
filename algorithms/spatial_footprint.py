@@ -83,6 +83,95 @@ def build_relative_patch_table(
     return table
 
 
+def is_linear_probe(geom: np.ndarray, ratio: float = 0.25) -> bool:
+    """True when sites occupy a single line (one axis has a unique coordinate).
+
+    ``ratio`` is accepted for call compatibility and is not used. A 2- or
+    3-column shank is a 2-D layout even if the transverse span is a small
+    fraction of the long axis.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2 or g.shape[0] == 0:
+        raise ValueError(f"geom must be (C,2), got {getattr(g, 'shape', None)}")
+    n_x = int(np.unique(np.round(g[:, 0], 6)).size)
+    n_y = int(np.unique(np.round(g[:, 1], 6)).size)
+    return min(n_x, n_y) <= 1
+
+
+def build_physical_stencil_table(
+    geom: np.ndarray,
+    k_neighbors: int = 7,
+    pitch_slack: float = 0.8,
+) -> np.ndarray:
+    """Per-home table of fixed pitch-unit offsets (2-D stencil).
+
+    Slot ``k // 2`` is always the home electrode. Other slots aim at a frozen
+    set of physical offsets; missing sites are ``-1``. This is not event-wise
+    KNN order.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    k = int(k_neighbors)
+    if k < 1 or k % 2 == 0:
+        raise ValueError(f"k_neighbors must be a positive odd integer, got {k_neighbors}")
+    n_channels = g.shape[0]
+    table = np.full((n_channels, k), -1, dtype=np.int64)
+    if n_channels == 0:
+        return table
+    pitch = float(median_nearest_neighbor_spacing(g)) if n_channels >= 2 else 1.0
+    # Seven-slot plus + two diagonals; home at the centre index.
+    offsets = np.array(
+        [
+            [-1.0, 0.0],
+            [0.0, -1.0],
+            [-1.0, -1.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    if k != 7:
+        extra = np.array([[-1.0, 1.0], [1.0, -1.0], [-2.0, 0.0], [2.0, 0.0]], dtype=np.float64)
+        offsets = np.vstack([offsets, extra])[:k]
+        offsets[k // 2] = 0.0
+    home_slot = k // 2
+    offsets[home_slot] = 0.0
+    slack = float(pitch_slack) * max(pitch, 1e-8)
+    for ch in range(n_channels):
+        used: set[int] = set()
+        table[ch, home_slot] = ch
+        used.add(ch)
+        targets = g[ch] + offsets * pitch
+        for j in range(k):
+            if j == home_slot:
+                continue
+            dist = np.linalg.norm(g - targets[j], axis=1)
+            order = np.argsort(dist, kind="stable")
+            for cand in order:
+                ci = int(cand)
+                if ci in used:
+                    continue
+                if float(dist[ci]) <= slack:
+                    table[ch, j] = ci
+                    used.add(ci)
+                break
+    return table
+
+
+def relative_offset_neighbor_table(
+    geom: np.ndarray,
+    half_width: int = 3,
+) -> np.ndarray:
+    """Fixed relative-offset slots: 1-D rank along the primary axis, else 2-D stencil."""
+    k = 2 * int(half_width) + 1
+    if is_linear_probe(geom):
+        return build_relative_patch_table(geom, half_width=half_width)
+    return build_physical_stencil_table(geom, k_neighbors=k)
+
+
 def build_knn_table_with_self(geom: np.ndarray, k_neighbors: int) -> np.ndarray:
     """Per-channel KNN table including self at slot 0 (sorted by distance).
 
@@ -97,6 +186,119 @@ def build_knn_table_with_self(geom: np.ndarray, k_neighbors: int) -> np.ndarray:
         dists = np.linalg.norm(g - g[ch], axis=1)
         table[ch] = np.argsort(dists)[:k]
     return table
+
+
+def median_nearest_neighbor_spacing(geom: np.ndarray) -> float:
+    """Median Euclidean distance from each electrode to its nearest other site.
+
+    This is the channel pitch on a 2-D MEA. It is not
+    :func:`Spatial.algorithms.geometric_prefilters.median_channel_spacing`,
+    which walks consecutive sites after a 1-D sort and underestimates pitch
+    on a dense grid.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2 or g.shape[0] < 2:
+        raise ValueError(f"geom must be (C,2) with C>=2, got {getattr(g, 'shape', None)}")
+    n = g.shape[0]
+    nn = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        dists = np.linalg.norm(g - g[i], axis=1)
+        dists[i] = np.inf
+        nn[i] = float(np.min(dists))
+    return float(np.median(nn))
+
+
+def build_radius_neighbor_table(geom: np.ndarray, radius_um: float) -> np.ndarray:
+    """Per-channel neighbors with Euclidean distance ``<= radius_um``.
+
+    Self is always slot 0 (distance 0). Shorter rows on the array edge are
+    padded with ``-1``, which :func:`extract_local_p2p` and
+    :func:`com_features` already ignore.
+
+    Returns:
+        (n_channels, max_k) int64 neighbor indices.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    radius = float(radius_um)
+    if radius < 0.0:
+        raise ValueError(f"radius_um must be >= 0, got {radius_um}")
+    n_channels = g.shape[0]
+    if n_channels == 0:
+        return np.zeros((0, 1), dtype=np.int64)
+
+    neighbors: list[np.ndarray] = []
+    max_k = 1
+    for ch in range(n_channels):
+        dists = np.linalg.norm(g - g[ch], axis=1)
+        nbr = np.flatnonzero(dists <= radius + 1e-9)
+        nbr = nbr[np.argsort(dists[nbr], kind="stable")]
+        neighbors.append(nbr)
+        if nbr.size > max_k:
+            max_k = int(nbr.size)
+    table = np.full((n_channels, max_k), -1, dtype=np.int64)
+    for ch, nbr in enumerate(neighbors):
+        table[ch, : nbr.size] = nbr
+    return table
+
+
+def local_home_channels(
+    signal: np.ndarray,
+    spike_times: np.ndarray,
+    seed_xy: np.ndarray,
+    geom: np.ndarray,
+    radius_um: float,
+    half_window: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Most-negative channel inside a same-spike disk around each seed.
+
+    At event time ``t``, only electrodes within ``radius_um`` of ``seed_xy``
+    are eligible. The home is the most-negative site in
+    ``[t - half_window, t + half_window]``. Extrema outside the disk are a
+    different spike and are ignored. If the disk is empty, snap to the
+    nearest electrode (no amplitude look-up on a far site).
+
+    Returns:
+        homes: (n_spikes,) int64 channel ids.
+        n_in_disk: (n_spikes,) int64 electrodes inside the disk (0 if snapped).
+    """
+    sig = np.asarray(signal, dtype=np.float64)
+    times = np.asarray(spike_times, dtype=np.int64).ravel()
+    xy = np.asarray(seed_xy, dtype=np.float64)
+    g = np.asarray(geom, dtype=np.float64)
+    if sig.ndim != 2:
+        raise ValueError(f"signal must be (C, T), got {sig.shape}")
+    if g.ndim != 2 or g.shape[1] != 2 or g.shape[0] != sig.shape[0]:
+        raise ValueError("geom must be (n_channels, 2) matching signal")
+    if xy.ndim != 2 or xy.shape != (times.size, 2):
+        raise ValueError(
+            f"seed_xy must be (n_spikes, 2), got {xy.shape} for n={times.size}"
+        )
+    half = int(half_window)
+    if half < 0:
+        raise ValueError(f"half_window must be >= 0, got {half_window}")
+    radius = float(radius_um)
+    if radius < 0.0:
+        raise ValueError(f"radius_um must be >= 0, got {radius_um}")
+
+    n_channels, n_samples = sig.shape
+    n = times.size
+    homes = np.empty(n, dtype=np.int64)
+    n_in_disk = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        dists = np.linalg.norm(g - xy[i], axis=1)
+        near = dists <= radius + 1e-9
+        n_near = int(near.sum())
+        n_in_disk[i] = n_near
+        if n_near == 0:
+            homes[i] = int(np.argmin(dists))
+            continue
+        t0 = max(int(times[i]) - half, 0)
+        t1 = min(int(times[i]) + half + 1, n_samples)
+        trough = sig[near, t0:t1].min(axis=1)
+        homes[i] = int(np.flatnonzero(near)[int(np.argmin(trough))])
+    return homes, n_in_disk
 
 
 def estimate_p2p_amplitude(
@@ -252,6 +454,51 @@ def central_ratio_features(
     return np.clip(ratios, 0.0, float(clip))
 
 
+def quantize_signed_adc(
+    signal: np.ndarray,
+    n_bits: int,
+    full_scale: float | np.ndarray,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Uniform signed ADC: fixed analog full-scale, then ``n_bits`` two's complement.
+
+    ``full_scale`` is analog ±Vref: both rails map to
+    ``±(2**(n_bits-1) - 1)``. The extra two's-complement negative code is
+    unused so the range stays symmetric. A scalar scale is one gain for all
+    channels; a length-C vector is a per-channel gain. This is not per-event
+    AGC and not :func:`quantize_p2p`.
+
+    Returns the reconstructed analog values (code × LSB), same shape as
+    ``signal``.
+    """
+    x = np.asarray(signal, dtype=np.float64)
+    if isinstance(n_bits, bool) or int(n_bits) != n_bits:
+        raise ValueError(f"n_bits must be an int, got {n_bits!r}")
+    bits = int(n_bits)
+    if bits < 2 or bits > 24:
+        raise ValueError(f"n_bits must be in [2, 24], got {n_bits}")
+    qpos = (1 << (bits - 1)) - 1
+    fs = np.asarray(full_scale, dtype=np.float64)
+    if fs.ndim == 0:
+        if not np.isfinite(fs) or float(fs) <= 0.0:
+            raise ValueError("full_scale must be a positive finite scalar")
+        lsb = max(float(fs) / float(qpos), float(eps))
+        codes = np.clip(np.rint(x / lsb), -qpos, qpos)
+        return codes * lsb
+    if x.ndim == 0:
+        raise ValueError("vector full_scale requires an array signal")
+    if fs.shape != (x.shape[0],):
+        raise ValueError(
+            f"vector full_scale must have shape (n_channels,) = ({x.shape[0]},), got {fs.shape}"
+        )
+    if np.any(~np.isfinite(fs)) or np.any(fs <= 0.0):
+        raise ValueError("full_scale per channel must be positive and finite")
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    lsb = np.maximum(fs.reshape(shape) / float(qpos), float(eps))
+    codes = np.clip(np.rint(x / lsb), -qpos, qpos)
+    return codes * lsb
+
+
 def quantize_p2p(
     p2p: np.ndarray,
     n_bits: int | None,
@@ -304,6 +551,33 @@ def quantize_p2p(
     return np.clip(codes, 0.0, max_level)
 
 
+def quantize_com(
+    com: np.ndarray,
+    n_bits: int | None,
+) -> np.ndarray:
+    """Axis-wise unsigned integer quantizer of 2-D COM in ``[0, 1]``.
+
+    Each coordinate uses a fixed analytic range ``[0, 1]`` mapped onto
+    ``[0, 2**n_bits - 1]``. ``n_bits=None`` is a float passthrough.
+
+    This is not :func:`quantize_p2p`. P2P quantizes a neighborhood amplitude
+    vector; COM quantizes the two geometry-normalized centroid coordinates.
+    """
+    values = np.asarray(com, dtype=np.float64)
+    if values.ndim != 2 or values.shape[1] != 2:
+        raise ValueError(f"com must have shape (n, 2), got {values.shape}")
+    if n_bits is None:
+        return values.copy()
+    if isinstance(n_bits, bool) or int(n_bits) != n_bits:
+        raise ValueError(f"n_bits must be an int or None, got {n_bits!r}")
+    bits = int(n_bits)
+    if bits < 1 or bits > 62:
+        raise ValueError(f"n_bits must be in [1, 62] or None, got {n_bits}")
+    max_level = float((1 << bits) - 1)
+    scaled = np.clip(values, 0.0, 1.0) * max_level
+    return np.clip(np.rint(scaled), 0.0, max_level)
+
+
 def main_channel_features(
     central_channels: np.ndarray,
     n_channels: int,
@@ -312,6 +586,57 @@ def main_channel_features(
     ch = np.asarray(central_channels, dtype=np.float64).ravel()
     denom = float(max(int(n_channels) - 1, 1))
     return (ch / denom)[:, None]
+
+
+def main_channel_xy_features(
+    central_channels: np.ndarray,
+    geom: np.ndarray,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """Bbox-normalized (x, y) of the home electrode. Shape (n_spikes, 2).
+
+    On a 2-D MEA the raw channel index is not a spatial coordinate. This is
+    the electrode-snapped analogue of COM using the same geom bbox as
+    :func:`com_features`.
+    """
+    g = np.asarray(geom, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    ch = np.asarray(central_channels, dtype=np.int64).ravel()
+    if ch.size == 0:
+        return np.empty((0, 2), dtype=np.float64)
+    if g.shape[0] == 0:
+        raise ValueError("geom must contain at least one channel")
+    ch = np.clip(ch, 0, g.shape[0] - 1)
+    xy = g[ch]
+    geom_min = np.min(g, axis=0)
+    geom_span = np.max(g, axis=0) - geom_min
+    out = np.zeros_like(xy)
+    active = geom_span > float(eps)
+    out[:, active] = (xy[:, active] - geom_min[active]) / geom_span[active]
+    return np.clip(out, 0.0, 1.0)
+
+
+def normalize_geom_xy(
+    xy: np.ndarray,
+    geom: np.ndarray,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """Bbox-normalize arbitrary (x, y) with the same geom frame as COM."""
+    g = np.asarray(geom, dtype=np.float64)
+    pts = np.asarray(xy, dtype=np.float64)
+    if g.ndim != 2 or g.shape[1] != 2:
+        raise ValueError(f"geom must be (C,2), got {g.shape}")
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"xy must be (n, 2), got {pts.shape}")
+    if pts.shape[0] == 0:
+        return np.empty((0, 2), dtype=np.float64)
+    geom_min = np.min(g, axis=0)
+    geom_span = np.max(g, axis=0) - geom_min
+    out = np.zeros_like(pts)
+    active = geom_span > float(eps)
+    out[:, active] = (pts[:, active] - geom_min[active]) / geom_span[active]
+    return np.clip(out, 0.0, 1.0)
 
 
 def soft_localization_features(

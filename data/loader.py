@@ -17,6 +17,10 @@ CORTEXLAB_NPZ_PATH = (
     / "slices"
     / "dataset_1_20141202_228s_ksgt_int16.npz"
 )
+YGER_KS4_NPZ_PATH = Path(
+    "/mnt/data/backup_datasets/SNN_SpikeSorting/zenodo_1205233_work/"
+    "spatial_npz/yger_20160415_patch2_ks4_th13.npz"
+)
 
 
 @dataclass
@@ -221,6 +225,63 @@ def load_cortexlab_npz(path: Path = None, duration_s: float = None) -> Dataset:
         spike_times=spike_times,
         spike_units=spike_units,
         name="cortexlab_np_128ch",
+    )
+
+
+def load_yger_ks4(
+    path: Path | None = None,
+    duration_s: float = None,
+    good_only: bool = False,
+) -> Dataset:
+    """Load Kilosort4 Th=13 pseudo-GT for Yger 20160415_patch2.
+
+    Labels are KS4 clusters, not juxta ground truth. Raw stays on the HDD as
+    the existing int16 binary and is memmapped; nothing is copied to the SSD.
+    See ``Spatial/docs/yger_ks4_pseudo_gt.md``.
+    """
+    path = Path(path) if path is not None else YGER_KS4_NPZ_PATH
+    f = np.load(str(path), allow_pickle=True)
+    spike_times = f["spike_times_0based"].astype(np.int64)
+    spike_units = f["spike_unit_ids"].astype(np.int64)
+    geom = f["geom"].astype(np.float64)
+    fs = int(f["fs"])
+    n_channels = int(f["n_channels"])
+    n_samples = int(f["n_samples"])
+    bin_path = Path(str(f["raw_bin_path"]))
+    if not bin_path.exists():
+        raise FileNotFoundError(
+            f"Yger KS4 raw binary missing: {bin_path}. "
+            "It must remain on /mnt/data; Spatial does not copy it to the SSD."
+        )
+
+    if good_only:
+        unit_ids = f["unit_ids"].astype(np.int64)
+        labels = np.asarray(f["unit_ks_label"]).astype(str)
+        good = set(int(u) for u, lab in zip(unit_ids, labels) if lab == "good")
+        keep = np.array([int(u) in good for u in spike_units])
+        spike_times = spike_times[keep]
+        spike_units = spike_units[keep]
+
+    if duration_s is not None:
+        n_keep = int(duration_s * fs)
+        n_samples = min(n_samples, n_keep)
+        mask = spike_times < n_samples
+        spike_times = spike_times[mask]
+        spike_units = spike_units[mask]
+
+    raw_mm = np.memmap(
+        bin_path, dtype="<i2", mode="r", shape=(int(f["n_samples"]), n_channels)
+    )
+    raw = np.asarray(raw_mm[:n_samples].T, dtype=np.float64)
+    del raw_mm
+
+    return Dataset(
+        raw_data=raw,
+        geom=geom,
+        fs=fs,
+        spike_times=spike_times,
+        spike_units=spike_units,
+        name="yger_20160415_patch2_ks4_th13",
     )
 
 

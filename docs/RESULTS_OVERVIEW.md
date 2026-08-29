@@ -1,6 +1,6 @@
 # Results Overview
 
-Last reviewed: **2026-08-11**.
+Last reviewed: **2026-08-28**.
 
 This page is the decision-oriented map of Spatial's results. It distinguishes
 local pilot gates from the system gate and points to the detailed source
@@ -33,9 +33,118 @@ data phase and makes the bit result conditional.
 | Physical implementation advantage | beat indexed SRAM/digital baseline after peripherals | **Open** | logical mapping only in `hardware_mapping_spec.md` |
 | Realistic dense-2D support | new pipeline validated on suitable dense 2D data | **Open** | legacy 1024-channel result is not the new pipeline |
 | Online operation | causal signal path and no GT-dependent deployed state | **Open / blocked as a current claim** | current paper-facing isolation uses GT events/rows and zero-phase filtering |
+| Drift robustness | hold accuracy across a recording that actually drifts | **Untested, and the current representation cannot express the drift** | every drift arm was measured on a 15 s window with drift-to-noise 0.64; over 600 s the frozen home channel goes stale for 8 of 11 units; `drift_window_budget.md` |
 
 Passing an experiment-specific gate below does not change this system verdict
 unless all coupled requirements are evaluated together.
+
+## Independent POSNEG MVM / shift / causal-tracking knife (2026-08-27)
+
+Not a Mapping Row or free-deformable revival. Combined write-up:
+[`posneg_mvm_shift_drift.md`](posneg_mvm_shift_drift.md). Split tables:
+[`posneg_mvm_shift_drift_results.md`](posneg_mvm_shift_drift_results.md),
+[`drift_tracking_results.md`](drift_tracking_results.md).
+
+- Biased-dot \(S=Mx+b\) matches L2 ranking on co-home units; pure-dot collapses.
+- POSNEG beats P2P on HJ same-home; the trough carries the identity, not the peak.
+- Free per-candidate shift has \(L_{\mathrm{flex}}>0\) (impostor flexibility). Stop.
+- Frozen candidate-home POSNEG L2 remains the deployable tracker on the 60 s window.
+  Shared \(\delta\) is quiet on static data and recovers a controlled spatial ramp;
+  it does not beat Frozen same-home on HJ drift test. **The HJ-drift half of that
+  last clause is uninformative** — that window has no drift; see the window
+  budget below.
+
+Fair online baseline after that knife: [`ema_star_identity_convergence.md`](ema_star_identity_convergence.md).
+One global \(\eta^*=0.005\). Oracle-EMA matches self-EMA* on natural HJ; \(\eta=0.05\)
+is not a fair baseline because it collapses MEArec 20u. On this window STAR-Mem
+needs the safer updater, not a more complex drift model.
+
+## Estimator diagnostics amending that knife (2026-08-28)
+
+Two measurements of the deployed estimator and updater, no code change and no
+selection: [`drift_estimator_diagnostics.md`](drift_estimator_diagnostics.md).
+
+- **Q5 is reopened.** `estimate_best_shift` minimizes \(\|x-S(\delta)\mu\|^2\)
+  without profiling out a gain, so under-amplitude events buy a lower loss by
+  moving \(\delta\). On the no-drift HJ static control, \(\rho(\lvert\hat\delta\rvert,
+  \|x\|/\|\mu\|)\) is −0.489 and falls to −0.058 once a gain is profiled out,
+  with the mean \(\lvert\hat\delta\rvert\) dropping 42%. About half of the
+  "static noise floor" was bias, so \(C(d)=0.153<0.3\) sits inside the
+  correctable error budget and the D5 / shared-gain skips are no longer settled.
+- **A real drift signal survives.** After matching HJ drift to the HJ static
+  amplitude distribution, ~0.05 pitch of excess motion remains over the 60 s
+  window's cal+test events. ~~The inference drawn from this — that Q6's "Frozen
+  ties the shared-shift trackers" most likely stands — is superseded by the
+  window budget below.~~
+- **\(\eta^*\) is \(K=12\)-scoped.** The EMA collapse boundary moves with
+  template dimension: on MEArec 20u it is \(\eta=0.05/0.03/0.02\) at
+  \(K=7/12/16\), all at effective sample size per dimension 2.7–3.1, giving
+  \(\eta_{\mathrm{crit}}\approx1/(3K)\) and a scope rule \(\eta\le1/(5K)\).
+  Template dimension sets where the boundary is; unit density sets whether a
+  recording reaches it. \(\eta^*=0.005\) is unchanged but must not be carried to
+  another \(K\) or a denser probe without rechecking.
+
+## Window budget: the 60 s cut has no drift to track (2026-08-28)
+
+A measurement of the **input recording**, not of an algorithm, using an
+amplitude-invariant COM position readout with the static scene as control:
+[`drift_window_budget.md`](drift_window_budget.md).
+
+- **Q6's natural-HJ arm is untested, not tied.** In the 15 s tracker test
+  window the drift scene shows 1.01 µm of motion against 1.57 µm on the
+  **no-drift static control** — a drift-to-noise ratio of **0.64**. No tracker
+  could have won there and Frozen could not have lost. The full 600 s
+  recording has 18.39 µm (0.735 pitch) of median motion at ratio 55.9, so the
+  drift is real; it is simply outside the window that was used.
+- **The drift is an out-and-back excursion, not a ramp.** Units travel away
+  over ~100–250 s and return near t≈300 s, then repeat. A linear trend cancels
+  on that shape, so motion is also reported as a 25 s-smoothed excursion:
+  median **0.822 pitch** over 600 s against a 0.179 pitch static control.
+- **Real motion exceeds the representable range.** `SHIFT_FRACTIONAL` spans
+  \(\pm0.5\) pitch with hard saturation and reports an absolute offset rather
+  than integrating, so a unit that leaves the grid saturates silently. Over
+  600 s, **9 of 11 units have excursions above 0.5 pitch and 4 above 1.0 pitch**
+  (uncoverable by any fixed reference); restricted to units with a clean static
+  control, still 7 and 2. This is a range defect, independent of the gain and
+  quantization defects above, and invisible at 60 s.
+- **The channel selection is frozen and goes stale — this is the binding
+  defect.** Every template is indexed on `table[fit_home]`, and
+  `CausalTracker.unit_homes` is written once and never updated by any arm,
+  EMA included; the shift bank is a closed \(K\to K\) map that cannot admit an
+  outside channel. Over 600 s **8 of 11 units have blocks whose own majority
+  home differs from the fit home** (worst 48/120, up to 3 channels visited),
+  six of them against a static control of zero or one block; the three that never migrate are the
+  array-edge units, whose home pins while the footprint moves. Along the drift
+  axis rows step 20 µm while `pitch_um` is the staggered diagonal 25.01 µm, so
+  \(\pm0.5\) pitch is **±0.63 rows** and no grid point lands on the lattice.
+  **Widening the grid does not fix the slot misalignment**; the channel
+  selection has to become part of the tracked state, which is a different
+  algorithm.
+- **EMA\*'s \(+1.07\) pp on HJ drift is not drift tracking.** The number
+  stands; there is no motion in that window to follow. Stale-template offset
+  (\(\mu\) fitted on a moving first 30 s) is the available explanation and is
+  untested.
+- **Q5's \(C(d)=0.153\) is doubly compromised**: 1 s blocks give ~5 events per
+  unit-block (1 for u62) *and* the window carries no drift signal.
+- Unaffected: static-quiet arms, the MEArec 20u EMA collapse, and the
+  controlled-ramp responses — none of them require natural drift to be present.
+
+Consequence: the 60 s lock is a convention, not a data constraint. A 600 s
+rerun needs a wider or integrating shift state **and** a home that follows the
+estimate; the cheap first move is to measure what home staleness costs, with a
+Frozen arm against an oracle that re-gathers on each block's true majority
+home.
+
+The architectural split (60 s identity freeze stays; 600 s state is COM +
+tracked home, not a closed \(K\to K\) \(\delta\)) is written in
+[`tracked_home_and_com_state.md`](tracked_home_and_com_state.md). Isolated
+COM tracking (no classification) is in
+[`com_tracking_range.md`](com_tracking_range.md): a 5 s GT hold and a
+streaming commit every ~10 events stay in a 20 µm row on both 600 s drift
+recordings; frozen fit COM does not. The **oracle ceiling** is **~7 % of GT
+spikes already outside that 20 µm row of the contemporaneous true unit COM**
+(~93 % in-range even with a perfect tracker). Channel mismatch at ~26 % is
+staggered-site discreteness, not a 20 µm miss.
 
 ## Latest relative-offset and shifted-similarity branch
 

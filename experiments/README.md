@@ -16,6 +16,52 @@ dataset, split, filtering, aggregation, and provenance rules.
 
 ## Choose a runner
 
+### POSNEG MVM matching, polarity, shift leakage, causal tracking
+
+Independent of Mapping Row and of free per-event deformable templates.
+Frozen 60 s / four-recording protocol; do not retune from test.
+
+| Question | Runner | Result record |
+|---|---|---|
+| Can biased-dot replace L2, and what do pure-dot / cosine delete? Does POSNEG beat P2P via peak, trough, \(r_{pn}\), or \(\Delta c\)? | `run_posneg_mvm_ablation.py` | [`posneg_mvm_shift_drift.md`](../docs/posneg_mvm_shift_drift.md) |
+| Is moving-template shift robustness or impostor flexibility (\(L_{\mathrm{flex}}\))? | `run_spatial_shift_ablation.py` | same, Part C |
+| Is inferred drift global / tile / field / noise? Do static recordings stay quiet? | `run_drift_coherence.py` | [`drift_tracking_results.md`](../docs/drift_tracking_results.md) |
+| Which causal tracker beats Frozen without rewriting \(\mu\)? | `run_drift_tracking_compare.py` | same |
+| Do trackers recover known gain/shift on static data? | `run_controlled_drift.py` | same |
+| Does the shift estimator turn amplitude error into false motion, and where is the EMA collapse rate as a function of \(K\)? | `run_drift_estimator_diagnostics.py` | [`drift_estimator_diagnostics.md`](../docs/drift_estimator_diagnostics.md) |
+| How much drift is inside the locked 60 s window, does the \(\pm0.5\) pitch grid cover the real motion, and does the frozen per-unit home channel stay valid? | `run_drift_window_budget.py` | [`drift_window_budget.md`](../docs/drift_window_budget.md) |
+
+Fair online baseline after that knife: `run_ema_star.py` → [`ema_star_identity_convergence.md`](../docs/ema_star_identity_convergence.md). One global \(\eta^*=0.005\). Oracle-EMA is diagnostic.
+
+COM-only tracking on the full 600 s (no identity matching): `run_com_tracking.py` → [`com_tracking_range.md`](../docs/com_tracking_range.md). Includes the oracle scatter ceiling (fraction of GT spikes already outside the contemporaneous 5 s unit COM).
+
+```bash
+python -m Spatial.experiments.run_com_tracking --pilot
+```
+
+The diagnostics runner measures the deployed `estimate_best_shift` and
+`CausalTracker` without modifying them. It **reopens Q5** and scopes \(\eta^*\)
+to \(K=12\); it selects nothing.
+
+The window-budget runner reads the **input recording**, not an algorithm, and
+is the only drift runner not locked to 60 s. It measures a drift-to-noise ratio
+of 0.64 in the 15 s tracker test window against the static control, which
+reclassifies Q6's natural-HJ arm as untested rather than tied. It also
+reproduces `majority_home` on the fit split and shows that 8 of 11 units
+outlive their frozen home channel over 600 s, so the channel selection — which
+no arm updates — is a defect a wider shift grid does not reach.
+
+```bash
+python -m Spatial.experiments.run_ema_star --pilot --duration 60
+python -m Spatial.experiments.run_drift_estimator_diagnostics --pilot
+python -m Spatial.experiments.run_drift_window_budget --pilot
+python -m Spatial.experiments.run_posneg_mvm_ablation --pilot --duration 60
+python -m Spatial.experiments.run_spatial_shift_ablation --pilot --duration 60
+python -m Spatial.experiments.run_drift_coherence --pilot --duration 60
+python -m Spatial.experiments.run_drift_tracking_compare --pilot --duration 60
+python -m Spatial.experiments.run_controlled_drift --pilot --duration 60
+```
+
 ### Current relative-offset / shifted-similarity branch
 
 | Question | Runner | Result record |
@@ -29,6 +75,8 @@ dataset, split, filtering, aggregation, and provenance rules.
 | Does the descriptor survive a causal filter and ±2-sample alignment jitter? | `run_shape_causal_boundary.py` | **Causal passes, jitter fails**; same record, "Phase A2" |
 | Does the shape descriptor move the 0.99-recall/4x-traffic frontier? | `run_shape_candidate_traffic.py` | **Negative**; same record, "Phase B" |
 | Where is the POSNEG code-width optimum, and does more precision help? | `run_posneg_bitwidth_sweep.py` | [`LEVEL1_ROADMAP.md`](../docs/LEVEL1_ROADMAP.md), "noise-limited, not capacity-limited" |
+| Export Yger 20160415_patch2 KS4 Th=13 as Spatial pseudo-GT | `python -m Spatial.data.export_yger_ks4_pseudo_gt` (and `run_kilosort_yger --tag th13`) | [`yger_ks4_pseudo_gt.md`](../docs/yger_ks4_pseudo_gt.md) |
+| How well does nearest-centroid main-channel / COM / low-bit COM assign KS4 units on that 252-ch MEA, and what changes if extrema >3 pitches away are treated as a different spike? | `run_com_mainchannel_lowbit.py` (`--same-spike-max-pitches 3`) | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md) |
 
 The shape-descriptor branch is closed with no selected configuration. Its
 runners are retained because the negative results are design evidence.
@@ -75,6 +123,21 @@ self-predicted online data run under that selection.
 | How do methods compare across all HJ scenes? | `run_hj16_method_sweep.py` | [`hj16_method_sweep.md`](../docs/hj16_method_sweep.md) |
 | How do methods compare across MEArec recordings? | `run_mearec_method_sweep.py` | [`mearec_method_sweep.md`](../docs/mearec_method_sweep.md) |
 | How sensitive is P2P assignment to bit depth? | `run_lowbit_p2p.py` | [`central_ratio_vs_maxnorm_benchmark.md`](../docs/central_ratio_vs_maxnorm_benchmark.md) and encoding records |
+| How well does nearest-centroid COM / main-channel / low-bit COM assign Yger KS4 units (whole-array vs 3-pitch same-spike disk)? | `run_com_mainchannel_lowbit.py` | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md) |
+| If P2P is 5-bit, how many COM bits survive on that 3-pitch disk? | `analyze_com_from_p2p_bits.py` | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md), "5-bit P2P → 6-bit COM" |
+| With a fixed analog gain then 5/6-bit signed ADC, does COM still support 6-bit codes? | `analyze_adc_absolute_com.py` | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md), "Absolute 5/6-bit ADC" |
+| After 6-bit all-channel p99.9 ADC, how many wrong units does a COM radius drop? | `analyze_com_radius_prefilter.py` | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md), "COM radius prefilter" |
+| Are the 362 KS4 clusters oversplit / drift-split, or packed neighboring cells? | `analyze_ks4_unit_splits.py` | [`yger_ks4_pseudo_gt.md`](../docs/yger_ks4_pseudo_gt.md), "Are 362 clusters 362 cells?" |
+| On KS4-paper `sim_no_drift` (1200 GT units, NP 384-ch), how well do COM / main-channel classify? | `run_com_ks4sim_nodrift.py` | [`ks4sim_no_drift_com.md`](../docs/ks4sim_no_drift_com.md) |
+| Can low-bit COM_y (local residual + radius) beat full-probe bbox codes on that 1-D shank? | `analyze_np_com_lowbit.py` | [`ks4sim_no_drift_com.md`](../docs/ks4sim_no_drift_com.md), "Low-bit COM on the 1-D shank" |
+| On that shank, is the right low-bit object a mixed L2 unique-ID or a `(home, residual)` codebook / ADC COM? | `analyze_np_com_optimize.py` | [`ks4sim_no_drift_com.md`](../docs/ks4sim_no_drift_com.md), "Home as address, residual as bits" |
+| Does a per-unit interval / weighted-violation mapping beat mean P2P + L1 at 0.99 recall and 4× waveform reads? | `run_mapping_row_static.py` | [`mapping_row_v0_results.md`](../docs/mapping_row_v0_results.md) — **FAIL, stop** |
+| Behind the frozen D9 p99.9 source, is the sketch failure the dyadic dictionary, 5-bit quantization, or horizon? | `run_temporal_representation_decomp.py` | [`temporal_representation_decomp_results.md`](../docs/temporal_representation_decomp_results.md) |
+| Does empty-inner → outer p99.9 (not certified exit) hit 0.99 recall at ≥2× on D9 or `com_posneg`? | `run_bulk_tail_escalation.py` | [`bulk_tail_escalation_results.md`](../docs/bulk_tail_escalation_results.md) — **kill** |
+| Inside the Yger 70 µm COM ball, can P2P/POSNEG unique-ID packed neighbours? | `run_yger_com_ball_p2p.py` | [`yger_com_direct_assign.md`](../docs/yger_com_direct_assign.md), "P2P / POSNEG inside the 70 µm COM ball" |
+| Inside the NP `(home, 3-bit residual)` codebook list, can P2P/POSNEG unique-ID co-home units? | `run_np_codebook_p2p.py` | [`ks4sim_no_drift_com.md`](../docs/ks4sim_no_drift_com.md) |
+| On RO-POSNEG \(z\), does regularized full-covariance QDA beat mean L1/L2, and is the gain correlation? | `run_ro_ss_qda.py` | [`ro_ss_qda_results.md`](../docs/ro_ss_qda_results.md) — **FAIL co-home / P3** |
+| Can POSNEG be identity \(\mu_u\) + trackable state \(s_t\) without losing co-home separation? | `run_deformable_spatial_static.py` | [`deformable_spatial_template.md`](../docs/deformable_spatial_template.md) — **Phase-1 stop** |
 | Which SOM hyperparameters matter? | `sweep_som_params.py` | baseline result documents |
 
 ### Low-bit spatial WTA classifier
@@ -134,6 +197,7 @@ fail-closed confirmation boundaries.
 | `run_compact_waveform_refinement.py` | Full 4/5-bit SAD, shared Fisher taps, and fixed morphology behind frozen candidates | Shared taps are conditional; [`compact_waveform_refinement.md`](../docs/compact_waveform_refinement.md) |
 | `run_pair_conditioned_waveform.py` | Can pair-specific Fisher taps preserve candidate-internal ordering? | Accuracy recovers, traffic/storage do not |
 | `run_causal_temporal_sketch.py` | Can a signed-5-bit dyadic prefix sketch meet accuracy and bit-traffic gates? | Negative; formal selection null; [`causal_temporal_sketch_results.md`](../docs/causal_temporal_sketch_results.md) |
+| `run_temporal_representation_decomp.py` | Dictionary vs quantization vs horizon behind the same source | Dictionary-limited; signed-5 prefix least-bad; [`temporal_representation_decomp_results.md`](../docs/temporal_representation_decomp_results.md) |
 
 The temporal sketch runner's recorded pilot does not authorize confirmation.
 A best observed failed point must not be called selected.
